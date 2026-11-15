@@ -58,6 +58,23 @@ Dès qu'une réponse valide arrive, la période normale reprend. Le bouton *Rafr
 Seul le premier échec est journalisé en `warning` (les suivants en `debug`) ; le retour à la normale est journalisé en `info`.
 Un chemin JSON introuvable n'est pas un échec de la source : la période n'est pas modifiée.
 
+## Surveillance du daemon
+
+- **Processus disparu** : relancé par le core Jeedom (gestion automatique, activée par défaut).
+- **Daemon vivant mais en défaut** : une vérification s'exécute chaque minute (cron Jeedom). Elle interroge le daemon
+  (`status`) et considère qu'il est en défaut s'il ne répond pas dans les 5 s, si sa boucle de scrutation est figée
+  depuis plus de 30 s, ou si une scrutation dure anormalement longtemps (> 3 × timeout + 30 s).
+  Après **2 constats consécutifs** (≈ 2 min), le daemon est redémarré, un message est ajouté au centre de messages
+  et l'événement est journalisé en `error`. Rien n'est redémarré si la gestion automatique est désactivée
+  (le défaut est alors seulement journalisé).
+- **Configuration désynchronisée** : si la liste des équipements connus du daemon diffère de celle de Jeedom
+  (daemon relancé hors Jeedom, configuration perdue), la configuration est renvoyée automatiquement.
+- **Délai total** : une requête HTTP est interrompue au bout de *timeout* secondes au total, même si la source
+  répond au compte-gouttes (le timeout du socket, lui, ne s'applique qu'à chaque opération réseau).
+
+Limite : la résolution DNS n'est pas couverte par le timeout ; un DNS qui ne répond pas peut bloquer une scrutation,
+ce que la surveillance détecte au bout de 3 × timeout + 30 s et traite par un redémarrage.
+
 ## Architecture
 
 ```

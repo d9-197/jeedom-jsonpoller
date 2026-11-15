@@ -97,7 +97,11 @@ class jsonpoller extends eqLogic {
     stream_set_timeout($fp, 5);
     fwrite($fp, json_encode($_payload) . "\n");
     $reply = fgets($fp);
+    $timedOut = !empty(stream_get_meta_data($fp)['timed_out']);
     fclose($fp);
+    if ($timedOut) {
+      throw new Exception('délai dépassé, le daemon ne répond pas');
+    }
     $reply = json_decode((string) $reply, true);
     if (!is_array($reply) || empty($reply['ok'])) {
       throw new Exception('Réponse du daemon invalide : ' . json_encode($reply));
@@ -107,6 +111,11 @@ class jsonpoller extends eqLogic {
 
   /** Pousse la configuration de tous les équipements actifs au daemon. */
   public static function sendConfig() {
+    return self::sendToDaemon(array('cmd' => 'config', 'equipments' => self::buildConfig()));
+  }
+
+  /** Configuration que le daemon doit connaître (équipements actifs avec une URL). */
+  public static function buildConfig() {
     $equipments = array();
     foreach (self::byType(__CLASS__, true) as $eq) {
       $commands = array();
@@ -134,7 +143,78 @@ class jsonpoller extends eqLogic {
         'commands' => $commands,
       );
     }
-    return self::sendToDaemon(array('cmd' => 'config', 'equipments' => $equipments));
+    return $equipments;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Surveillance du daemon (appelée chaque minute par le cron Jeedom)   */
+  /* ------------------------------------------------------------------ */
+
+  const WATCHDOG_MAX_LOOP_AGE = 30; // s : la boucle du daemon tourne au moins chaque seconde
+  const WATCHDOG_FAILS_BEFORE_RESTART = 2;
+
+  public static function cron() {
+    try {
+      self::watchdog();
+    } catch (Exception $e) {
+      log::add(__CLASS__, 'error', 'Surveillance du daemon : ' . $e->getMessage());
+    }
+  }
+
+  /**
+   * Un daemon dont le processus a disparu est déjà relancé par le core (gestion
+   * automatique). Ici on couvre le reste : daemon vivant mais injoignable ou bloqué,
+   * et daemon qui ne connaît pas (ou plus) les bons équipements.
+   */
+  public static function watchdog() {
+    if (self::deamon_info()['state'] != 'ok') {
+      return;
+    }
+    $problem = '';
+    $status = array();
+    try {
+      $status = self::sendToDaemon(array('cmd' => 'status'));
+      if (($status['loop_age'] ?? 0) > self::WATCHDOG_MAX_LOOP_AGE) {
+        $problem = 'boucle de scrutation figée depuis ' . $status['loop_age'] . ' s';
+      } elseif (!empty($status['stuck'])) {
+        $problem = 'scrutation(s) bloquée(s) pour les équipements ' . implode(', ', $status['stuck']);
+      }
+    } catch (Exception $e) {
+      $problem = 'daemon injoignable (' . $e->getMessage() . ')';
+    }
+
+    $key = 'jsonpoller::watchdog::fails';
+    if ($problem !== '') {
+      $fails = (int) cache::byKey($key)->getValue(0) + 1;
+      cache::set($key, $fails);
+      log::add(__CLASS__, 'warning', 'Daemon : ' . $problem . ' (' . $fails . '/' . self::WATCHDOG_FAILS_BEFORE_RESTART . ')');
+      if ($fails >= self::WATCHDOG_FAILS_BEFORE_RESTART) {
+        cache::set($key, 0);
+        if (config::byKey('deamonAutoMode', __CLASS__, 1) != 1) {
+          log::add(__CLASS__, 'error', 'Daemon en défaut mais gestion automatique désactivée : pas de redémarrage');
+          return;
+        }
+        $msg = 'Daemon JSON Poller redémarré automatiquement : ' . $problem;
+        log::add(__CLASS__, 'error', $msg);
+        message::add(__CLASS__, $msg);
+        self::deamon_start();
+      }
+      return;
+    }
+    cache::set($key, 0);
+
+    // Daemon sain : vérifie qu'il connaît bien les équipements attendus
+    $expected = array();
+    foreach (self::buildConfig() as $eq) {
+      $expected[] = (int) $eq['id'];
+    }
+    sort($expected);
+    $known = array_map('intval', $status['equipments'] ?? array());
+    sort($known);
+    if ($expected !== $known) {
+      log::add(__CLASS__, 'warning', 'Configuration du daemon désynchronisée (attendu : ' . implode(',', $expected) . ' / connu : ' . implode(',', $known) . ') : renvoi de la configuration');
+      self::sendConfig();
+    }
   }
 
   /* ------------------------------------------------------------------ */

@@ -91,10 +91,23 @@ def fetch(eq):
     if eq["url"].lower().startswith("https") and not eq.get("verify_ssl", True):
         ctx = ssl._create_unverified_context()
     code = 0
+    deadline = time.monotonic() + eq.get("timeout", 10)  # délai TOTAL (le timeout du socket est par opération)
     try:
         with urllib.request.urlopen(req, timeout=eq.get("timeout", 10), context=ctx) as r:
             code = r.status
-            raw = r.read(MAX_BODY + 1)
+            chunks, size = [], 0
+            read = getattr(r, "read1", r.read)  # read1 rend la main dès qu'un morceau arrive (read bloque jusqu'à 64 Ko)
+            while True:
+                chunk = read(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                size += len(chunk)
+                if size > MAX_BODY:
+                    break
+                if time.monotonic() > deadline:
+                    raise TimeoutError("délai total dépassé")
+            raw = b"".join(chunks)
     except urllib.error.HTTPError as e:
         err = RuntimeError("HTTP %d" % e.code)
         err.code = e.code
@@ -136,6 +149,9 @@ class Scheduler:
         self.pool = ThreadPoolExecutor(max_workers=WORKERS)
         self.stop_evt = threading.Event()
         self.wake = threading.Event()
+        self.started_at = time.monotonic()
+        self.last_tick = time.monotonic()  # battement de cœur de la boucle de planification
+        self.cb_fail_streak = 0            # échecs consécutifs d'appel du callback Jeedom
 
     def set_config(self, equipments):
         with self.lock:
@@ -163,6 +179,7 @@ class Scheduler:
     def run(self):
         while not self.stop_evt.is_set():
             now = time.monotonic()
+            self.last_tick = now
             due, wait = [], 1.0
             with self.lock:
                 for st in self.state.values():
@@ -170,6 +187,7 @@ class Scheduler:
                         continue
                     if st["next"] <= now:
                         st["running"] = True
+                        st["started"] = now
                         due.append(st)
                     else:
                         wait = min(wait, st["next"] - now)
@@ -216,13 +234,31 @@ class Scheduler:
 
         try:
             self._send(payload)
+            self.cb_fail_streak = 0
         except Exception as e:
-            LOG.warning("Callback Jeedom en échec : %s", e)
+            self.cb_fail_streak += 1
+            LOG.warning("Callback Jeedom en échec (%d de suite) : %s", self.cb_fail_streak, e)
         finally:
             with self.lock:
                 st["running"] = False
                 st["next"] = max(time.monotonic(), started + delay)
             self.wake.set()
+
+    def status(self):
+        now = time.monotonic()
+        with self.lock:
+            ids = sorted(int(k) for k in self.state.keys())
+            running = [st for st in self.state.values() if st["running"]]
+            stuck = [int(st["cfg"]["id"]) for st in running
+                     if now - st.get("started", now) > 3 * int(st["cfg"].get("timeout", 10)) + 30]
+        return {
+            "loop_age": round(now - self.last_tick, 1),   # s depuis le dernier tour de la boucle
+            "equipments": ids,                            # équipements connus du daemon
+            "running": len(running),
+            "stuck": stuck,                               # scrutations anormalement longues
+            "cb_fail_streak": self.cb_fail_streak,
+            "uptime": int(now - self.started_at),
+        }
 
     def _send(self, payload):
         url = self.callback + ("&" if "?" in self.callback else "?") + urllib.parse.urlencode({"apikey": self.apikey})
@@ -253,6 +289,8 @@ class Handler(socketserver.StreamRequestHandler):
             self.server.scheduler.set_config(msg.get("equipments", []))
         elif cmd == "refresh":
             self.server.scheduler.refresh(msg.get("id"))
+        elif cmd == "status":
+            return reply(dict(self.server.scheduler.status(), ok=True))
         elif cmd != "ping":
             return reply({"ok": False, "error": "commande inconnue"})
         reply({"ok": True})
