@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: Vérifications statiques
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: info.json
+        run: |
+          python3 - <<'PY'
+          import json, os
+          info = json.load(open("plugin_info/info.json", encoding="utf-8"))
+          assert info["id"] == "jsonpoller"
+          assert os.path.exists("plugin_info/%s_icon.png" % info["id"]), "icône manquante"
+          assert os.path.exists("core/class/%s.class.php" % info["id"]), "classe principale manquante"
+          print("ok", info["id"], info["require"])
+          PY
+      - name: Syntaxe JavaScript
+        run: node --check desktop/js/jsonpoller.js
+      - name: Compilation Python
+        run: python3 -m py_compile resources/jsonpollerd/jsonpollerd.py tests/support/fake_services.py
+
+  python:
+    name: Daemon (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.9', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Tests du daemon
+        run: python -I -m unittest discover -s tests/python -v
+
+  php:
+    name: Plugin (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.1', '8.3']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: curl, json, mbstring, posix
+          coverage: none
+      - name: Syntaxe PHP
+        run: find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
+      - name: Tests unitaires
+        run: php tests/php/unit.php
+      - name: Test d'intégration (vrai daemon)
+        run: php tests/php/integration.php

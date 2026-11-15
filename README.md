@@ -1,5 +1,7 @@
 # JSON Poller — plugin Jeedom
 
+[![CI](https://github.com/d9-197/jeedom-jsonpoller/actions/workflows/ci.yml/badge.svg)](https://github.com/d9-197/jeedom-jsonpoller/actions/workflows/ci.yml)
+
 Scrute des URLs retournant du JSON (période minimale **10 s**) et alimente des commandes
 *info* à partir de valeurs choisies dans le JSON. Daemon Python 3, **aucune dépendance**
 à installer.
@@ -108,6 +110,25 @@ Jeedom (PHP) ◀──POST core/php/jeeJsonpoller.php?apikey=…─────�
 - Pas de filtres JSONPath avancés (`[?(@.x==1)]`, `*`).
 - Testé : daemon (Python) en local avec faux serveur ; syntaxe PHP/JS vérifiée.
   **Non testé dans une instance Jeedom réelle** (interface, hooks `postAjax`, démarrage du daemon).
+
+## Tests
+
+```bash
+tests/run_all.sh          # tout (~40 s) : mêmes vérifications que la CI
+tests/run_all.sh quick    # sans le test d'intégration PHP (~10 s)
+```
+
+Prérequis : `python3` (≥ 3.9), `php` (≥ 7.4, extension `posix`) et `node`. Aucune dépendance à installer (ni Composer ni pip).
+
+| Suite | Contenu |
+|---|---|
+| `tests/python/` | daemon : chemins JSON, backoff, requêtes HTTP (délai total, gros corps, POST…), envoi différentiel, protocole socket, processus complet |
+| `tests/php/unit.php` | conversions de format, facteur/décalage, configuration envoyée au daemon, callback, commandes internes |
+| `tests/php/integration.php` | le **vrai daemon** piloté par la vraie classe PHP : démarrage, flux de valeurs, resynchronisation, gel + redémarrage automatique, arrêt |
+
+Les tests PHP utilisent un faux cœur Jeedom (`tests/php/stubs.php`) : ils vérifient la logique du plugin, **pas** l'intégration
+dans un vrai Jeedom (interface, cron, base de données). La CI GitHub (`.github/workflows/ci.yml`) les exécute sur Python 3.9/3.11/3.12
+et PHP 7.4/8.1/8.3 à chaque push et pull request.
 
 ## Licence
 

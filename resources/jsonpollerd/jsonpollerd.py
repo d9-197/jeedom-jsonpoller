@@ -60,19 +60,24 @@ def extract(data, path):
             raise PathError("chemin invalide près de '%s'" % path[pos:])
         pos = m.end()
         idx, dq, sq, key = m.groups()
+        step = m.group(0).lstrip(".")
+        if idx is None:
+            k = dq if dq is not None else sq if sq is not None else key
+            if isinstance(cur, list) and dq is None and sq is None and re.fullmatch(r"-?\d+", k):
+                idx = k  # "list.1.v" : index écrit comme une clé
         try:
             if idx is not None:
+                if not isinstance(cur, list):   # ne pas indexer une chaîne ("abc"[0] = "a")
+                    raise TypeError
                 cur = cur[int(idx)]
             else:
-                k = dq if dq is not None else sq if sq is not None else key
-                if isinstance(cur, list) and dq is None and sq is None and re.fullmatch(r"-?\d+", k):
-                    cur = cur[int(k)]
-                else:
-                    cur = cur[k]
+                if not isinstance(cur, dict):
+                    raise TypeError
+                cur = cur[k]
         except (KeyError, IndexError):
-            raise PathError("introuvable : '%s'" % m.group(0).lstrip("."))
+            raise PathError("introuvable : '%s'" % step)
         except TypeError:
-            raise PathError("'%s' impossible sur une valeur de type %s" % (m.group(0).lstrip("."), type(cur).__name__))
+            raise PathError("'%s' impossible sur une valeur de type %s" % (step, type(cur).__name__))
     return cur
 
 
@@ -110,6 +115,7 @@ def fetch(eq):
                     raise TimeoutError("délai total dépassé")
             raw = b"".join(chunks)
     except urllib.error.HTTPError as e:
+        e.close()
         err = RuntimeError("HTTP %d" % e.code)
         err.code = e.code
         raise err
@@ -371,7 +377,10 @@ def main():
     try:
         server.serve_forever()
     finally:
-        sched.pool.shutdown(wait=False, cancel_futures=True)
+        try:
+            sched.pool.shutdown(wait=False, cancel_futures=True)
+        except TypeError:  # Python < 3.9
+            sched.pool.shutdown(wait=False)
         if args.pid and os.path.exists(args.pid):
             os.remove(args.pid)
 
