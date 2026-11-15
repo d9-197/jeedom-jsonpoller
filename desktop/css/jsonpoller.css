@@ -1,1 +1,23 @@
-#table_jsonValues tr.jsonRow.success td { background-color: rgba(92, 184, 92, .25); }
+/* Explorateur de valeurs JSON (fenêtre « Tester l'URL et choisir des valeurs ») */
+.jp-toolbar { margin-bottom: 8px; }
+.jp-toolbar #jp-filter { width: 40%; }
+.jp-tester { margin-bottom: 8px; }
+.jp-tester label { margin-bottom: 4px; }
+.jp-test-result { margin-top: 6px; min-height: 1.4em; word-break: break-all; }
+.jp-body { max-height: 380px; overflow: auto; border: 1px solid rgba(128, 128, 128, .3); border-radius: 3px; padding: 4px; }
+.jp-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 2px; }
+.jp-row:hover { background: rgba(128, 128, 128, .15); }
+.jp-children { margin-left: 18px; padding-left: 6px; border-left: 1px dotted rgba(128, 128, 128, .5); }
+.jp-key { font-weight: bold; }
+.jp-toggle { cursor: pointer; width: 12px; display: inline-block; }
+.jp-container .jp-key { cursor: pointer; }
+.jp-val { flex: 1 1 auto; min-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; }
+.jp-t-numeric { color: #2e8b57; }
+.jp-t-binary { color: #b8860b; }
+.jp-t-null { color: #888; font-style: italic; }
+.jp-alt { max-width: 230px; }
+.jp-path { flex: 0 1 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .85em; opacity: .75; }
+.jp-actions a { cursor: pointer; padding: 0 3px; }
+.jp-used { opacity: .45; }
+.jp-more { padding: 4px 8px; font-style: italic; }
+.jp-more a { cursor: pointer; }

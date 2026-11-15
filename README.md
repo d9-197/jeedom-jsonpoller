@@ -25,8 +25,11 @@ Jeedom le relance automatiquement s'il tombe (gestion automatique activée par d
 
 1. *Plugins → Programmation → JSON Poller → Ajouter*.
 2. Renseigner l'URL, la période (≥ 10 s), éventuellement en-têtes / méthode POST / corps.
-3. Bouton **« Tester l'URL et choisir des valeurs »** : affiche toutes les valeurs du JSON ;
-   un clic sur une ligne crée la commande info (chemin et sous-type pré-remplis).
+3. Bouton **« Tester l'URL et choisir des valeurs »** : ouvre l'arbre du JSON. Cochez des valeurs puis « Créer (N) »
+   (chemin, sous-type et format pré-remplis ; les chemins déjà utilisés sont grisés). Dans un tableau, le menu d'une valeur
+   permet de la désigner par l'identifiant de son élément (`items[?(@.id==2)].v`, plus stable que l'index) ou de calculer
+   sur tous les éléments (`items[*].v` : somme, moyenne…). Le **testeur de chemin** évalue en direct n'importe quel chemin
+   (jokers, filtres, agrégation) avec la logique du daemon : celui-ci doit être démarré.
 4. Sauvegarder. Le daemon reçoit la configuration immédiatement.
 
 ### Syntaxe des chemins
@@ -134,7 +137,8 @@ Jeedom (PHP) ◀──POST core/php/jeeJsonpoller.php?apikey=…─────�
 ## Tests
 
 ```bash
-tests/run_all.sh          # tout (~40 s) : mêmes vérifications que la CI
+tests/run_all.sh          # tout (~1 min) : mêmes vérifications que la CI
+(cd tests/e2e && npm ci) # une fois, pour le test navigateur (Playwright requis)
 tests/run_all.sh quick    # sans le test d'intégration PHP (~10 s)
 ```
 
@@ -143,7 +147,8 @@ Prérequis : `python3` (≥ 3.9), `php` (≥ 7.4, extension `posix`) et `node` (
 | Suite | Contenu |
 |---|---|
 | `tests/python/` | daemon : chemins JSON (jokers, filtres, agrégations), backoff, requêtes HTTP (délai total, gros corps, POST…), envoi différentiel, protocole socket, clé API, processus complet ; couverture des traductions ; cohérence des chemins générés par l'interface JS |
-| `tests/js/` | interface : génération des chemins, détection du sous-type, lignes du tableau des commandes (faux jQuery, `node --test`) |
+| `tests/js/` | interface : génération des chemins (exacts, filtres, jokers), détection du sous-type, échappement HTML, lignes du tableau des commandes (faux jQuery, `node --test`) |
+| `tests/e2e/` | la fenêtre de sélection dans **Chromium** avec jQuery 3, Bootstrap 3, bootbox 4 et Font Awesome 5 : dépliage, sélection multiple, création, menu des tableaux, testeur (vrai daemon), filtres, pagination, contenu malveillant, copie |
 | `tests/php/unit.php` | conversions de format, facteur/décalage, authentification, étiquettes Jeedom, configuration envoyée au daemon, callback, commandes internes |
 | `tests/php/integration.php` | le **vrai daemon** piloté par la vraie classe PHP : démarrage, clé API absente de la ligne de commande et des logs, jeton Bearer et variables, resynchronisation, gel + redémarrage automatique, arrêt |
 

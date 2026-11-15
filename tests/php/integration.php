@@ -112,6 +112,19 @@ test('variable modifiée : le watchdog renvoie la configuration, la source reço
   same(array(), Stubs::$logs, 'plus de renvoi tant que rien ne change');
 });
 
+test('evalPath : le testeur de chemin utilise la logique du daemon', function () {
+  $json = '{"a":[1,2,3],"o":[{"id":1,"v":"x"},{"id":2,"v":"y"}],"s":"0.00"}';
+  same(array('ok' => true, 'valid' => true, 'value' => 6, 'multi' => true, 'matches' => 3), jsonpoller::evalPath($json, 'a[*]', 'sum'));
+  same('y', jsonpoller::evalPath($json, 'o[?(@.id==2)].v')['value']);
+  same('0.00', jsonpoller::evalPath($json, 's')['value']);                    // les textes restent des textes
+  same(array(1, 2, 3), jsonpoller::evalPath($json, 'a[*]', 'list')['value']);
+  same(1, jsonpoller::evalPath($json, 'a[*]', 'agg_inconnue')['value']);      // agrégation inconnue => première
+  $bad = jsonpoller::evalPath($json, 'zzz');
+  same(false, $bad['valid']);
+  truthy(strpos($bad['error'], 'introuvable') !== false, 'message d\'erreur du daemon attendu');
+  same(false, jsonpoller::evalPath('{pas du json', 'a')['valid']);
+});
+
 test('watchdog : daemon sain et configuration alignée => aucune action', function () {
   Stubs::$logs = array();
   jsonpoller::watchdog();

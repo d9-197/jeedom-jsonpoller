@@ -116,6 +116,20 @@ class jsonpoller extends eqLogic {
     return $reply;
   }
 
+  /**
+   * Teste un chemin (jokers, filtres, agrégation) sur un JSON, avec la logique du daemon (pas de seconde
+   * implémentation). $_rawJson est transmis tel quel (pas de ré-encodage). Nécessite le daemon.
+   * Retourne array('valid' => bool, 'value' => ..., 'multi' => bool, 'matches' => int) ou array('valid' => false, 'error' => ...).
+   */
+  public static function evalPath($_rawJson, $_path, $_agg = 'first') {
+    $_agg = in_array($_agg, self::AGGREGATIONS, true) ? $_agg : 'first';
+    try {
+      return self::sendToDaemon(array('cmd' => 'eval', 'data_json' => (string) $_rawJson, 'path' => (string) $_path, 'agg' => $_agg));
+    } catch (Exception $e) {
+      throw new Exception(__('Le daemon n\'est pas joignable : démarrez-le pour tester un chemin', __FILE__) . ' (' . $e->getMessage() . ')');
+    }
+  }
+
   /** Pousse la configuration de tous les équipements actifs au daemon. */
   public static function sendConfig() {
     $equipments = self::buildConfig();

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+- Nouvelle fenêtre de sélection des valeurs :
+  - arbre repliable (premier niveau déplié), affichage par lots de 50 pour les grands tableaux (« afficher la suite » / « tout afficher ») ;
+  - sélection multiple (cases à cocher) et bouton « Créer (N) » ; la fenêtre reste ouverte ; les chemins déjà utilisés sont grisés ;
+  - dans un tableau, menu par valeur : désigner l'élément par son identifiant (`items[?(@.id==2)].v`, plus stable que l'index)
+    ou calculer sur tous les éléments (`items[*].v` : somme, moyenne, minimum, maximum, nombre, liste…) ;
+  - testeur de chemin en direct, calculé par le daemon (même logique que la scrutation) ;
+  - filtre par type (nombres, booléens, textes, nulles), bouton « Recharger », « Copier le chemin », valeur complète au survol.
+- Les textes JSON restent affichés entre guillemets (`"0.00"` n'est pas `0.00`).
+- Test de la fenêtre dans un vrai navigateur (Chromium) en CI.
+- Correction : « Copier le chemin » ne copiait rien quand Jeedom est servi en http (la fenêtre reprenait le focus).
+
 ## 0.2.0
 - Authentification dédiée : Basic (utilisateur / mot de passe) et Bearer (jeton).
 - Étiquettes Jeedom dans l'URL, les en-têtes, le corps et les identifiants : `#variable(nom)#` et `#[Objet][Équipement][Commande]#`

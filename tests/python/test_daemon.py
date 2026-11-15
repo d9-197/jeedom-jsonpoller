@@ -484,6 +484,39 @@ class SocketProtocolTests(Base):
     def test_invalid_message(self):
         self.assertFalse(self.call(None, raw=b"pas du json\n")["ok"])
 
+    def test_eval(self):
+        def ev(data, path, agg="first", raw=None):
+            return self.call({"apikey": "KEY", "cmd": "eval", "data_json": raw if raw is not None else json.dumps(data),
+                              "path": path, "agg": agg})
+        data = {"a": [1, 2, 3], "s": "0.00", "o": [{"id": 1, "v": "x"}, {"id": 2, "v": "y"}]}
+        self.assertEqual(ev(data, "s"), {"ok": True, "valid": True, "value": "0.00", "multi": False, "matches": 1})
+        self.assertEqual(ev(data, "a[*]", "sum"), {"ok": True, "valid": True, "value": 6, "multi": True, "matches": 3})
+        self.assertEqual(ev(data, "o[?(@.id==2)].v")["value"], "y")
+        self.assertEqual(ev(data, "a[*]", "list")["value"], [1, 2, 3])
+        self.assertEqual(ev(data, "a[*]", "inconnue")["value"], 1)                  # agrégation inconnue = première
+        self.assertEqual(ev(data, "")["value"], data)                                # chemin vide = tout
+        r = ev(data, "nope")
+        self.assertEqual((r["ok"], r["valid"]), (True, False))                      # erreur de chemin : pas une erreur de protocole
+        self.assertIn("introuvable", r["error"])
+        r = ev(data, "o[?(@.id=~1)].v")
+        self.assertFalse(r["valid"])
+        self.assertIn("filtre invalide", r["error"])
+        r = ev(None, "a", raw="{pas du json")
+        self.assertFalse(r["valid"])
+        self.assertIn("JSON invalide", r["error"])
+        r = ev(None, "a", raw="[" * 200000)                                          # imbrication excessive : pas de plantage
+        self.assertFalse(r["valid"])
+        self.assertTrue(self.call({"apikey": "KEY", "cmd": "ping"})["ok"], "le daemon répond toujours")
+
+    def test_eval_requires_apikey(self):
+        r = self.call({"apikey": "BAD", "cmd": "eval", "data_json": "{}", "path": ""})
+        self.assertFalse(r["ok"])
+        self.assertNotIn("valid", r)
+
+    def test_eval_preserves_raw_json_precision(self):
+        r = self.call({"apikey": "KEY", "cmd": "eval", "data_json": '{"n": 12345678901234567890, "f": 0.1}', "path": "n"})
+        self.assertEqual(r["value"], 12345678901234567890)
+
     def test_unknown_command(self):
         self.assertFalse(self.call({"apikey": "KEY", "cmd": "zzz"})["ok"])
 

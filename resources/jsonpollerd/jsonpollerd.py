@@ -201,6 +201,22 @@ def aggregate(values, agg):
     return values[-1] if agg == "last" else values[0]
 
 
+def evaluate(msg):
+    """Commande `eval` : applique un chemin (jokers, filtres, agrégation) à un JSON fourni par l'interface,
+    avec exactement la même logique que la scrutation. Une erreur de chemin n'est pas une erreur de protocole :
+    réponse {"ok": true, "valid": false, "error": ...}."""
+    try:
+        data = json.loads(msg.get("data_json", "null"))
+    except (ValueError, RecursionError) as e:
+        return {"ok": True, "valid": False, "error": "JSON invalide : %s" % e}
+    try:
+        nodes, multi = select(data, msg.get("path", ""))
+        value = aggregate(nodes, msg.get("agg") or "first") if multi else nodes[0]
+    except PathError as e:
+        return {"ok": True, "valid": False, "error": str(e)}
+    return {"ok": True, "valid": True, "value": value, "multi": multi, "matches": len(nodes)}
+
+
 def extract(data, path, agg="first"):
     """Valeur désignée par le chemin : a.b[0].c  /  $.a["x.y"]  /  items[*].v  /  items[?(@.id==3)].v
     Sans joker ni filtre : la valeur (erreur si introuvable). Avec : agrégation `agg`
@@ -453,6 +469,8 @@ class Handler(socketserver.StreamRequestHandler):
             self.server.scheduler.set_config(msg.get("equipments", []))
         elif cmd == "refresh":
             self.server.scheduler.refresh(msg.get("id"))
+        elif cmd == "eval":
+            return reply(evaluate(msg))
         elif cmd == "status":
             return reply(dict(self.server.scheduler.status(), ok=True))
         elif cmd != "ping":

@@ -74,3 +74,24 @@ jobs:
         run: php tests/php/unit.php
       - name: Test d'intégration (vrai daemon)
         run: php tests/php/integration.php
+
+  browser:
+    name: Fenêtre de sélection (navigateur)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: tests/e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Bibliothèques de la page (jQuery, Bootstrap 3, bootbox, Font Awesome)
+        run: npm ci --no-audit --no-fund
+      - name: Playwright + Chromium
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - name: Tests dans Chromium
+        run: node --test --test-reporter=spec explorer.e2e.js

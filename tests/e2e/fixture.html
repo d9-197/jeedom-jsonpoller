@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Fixture - explorateur JSON</title>
+  <link rel="stylesheet" href="node_modules/bootstrap/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="node_modules/@fortawesome/fontawesome-free/css/all.min.css">
+  <link rel="stylesheet" href="../../desktop/css/jsonpoller.css">
+</head>
+<body>
+  <!-- Fragment du formulaire de l'équipement (ce dont l'explorateur a besoin) -->
+  <input class="eqLogicAttr" data-l1key="configuration" data-l2key="url" value="http://source.local/api">
+  <select class="eqLogicAttr" data-l1key="configuration" data-l2key="method"><option>GET</option></select>
+  <textarea class="eqLogicAttr" data-l1key="configuration" data-l2key="headers"></textarea>
+  <textarea class="eqLogicAttr" data-l1key="configuration" data-l2key="body"></textarea>
+  <select class="eqLogicAttr" data-l1key="configuration" data-l2key="authType"><option value="none">none</option></select>
+  <input class="eqLogicAttr" data-l1key="configuration" data-l2key="authUser">
+  <input class="eqLogicAttr" data-l1key="configuration" data-l2key="authPassword">
+  <input class="eqLogicAttr" data-l1key="configuration" data-l2key="authToken">
+  <input class="eqLogicAttr" data-l1key="configuration" data-l2key="timeout" value="10">
+  <input type="checkbox" class="eqLogicAttr" data-l1key="configuration" data-l2key="verifySsl" checked>
+  <a id="bt_exploreJson" class="btn btn-info">Explorer</a>
+  <table id="table_cmd"><tbody></tbody></table>
+
+  <script src="node_modules/jquery/dist/jquery.min.js"></script>
+  <script src="node_modules/bootstrap/dist/js/bootstrap.min.js"></script>
+  <script src="node_modules/bootbox/bootbox.js"></script>
+  <script>
+    /* Faux environnement Jeedom (juste ce que le plugin utilise) */
+    window.__ajaxCalls = []
+    window.modifyWithoutSave = false
+    window.init = function (v) { return v === undefined || v === null ? '' : v }
+    window.isset = function (v) { return typeof v !== 'undefined' }
+    window.is_numeric = function (v) { return !isNaN(parseFloat(v)) && isFinite(v) }
+    window.jeedom = { cmd: {
+      availableType: function () { return '<select class="cmdAttr form-control input-sm" data-l1key="type"><option value="info">info</option></select>' },
+      changeType: function () {}
+    } }
+    window.jeedomUtils = { showAlert: function (o) { window.__alerts = (window.__alerts || []).concat([o]) } }
+    $.fn.value = function (v) {
+      if (v === undefined) return this.is(':checkbox') ? this.prop('checked') : this.val()
+      return this.is(':checkbox') ? this.prop('checked', !!v) : this.val(v)
+    }
+    $.fn.setValues = function (obj, selector) {
+      this.find(selector).each(function () {
+        var $e = $(this), l1 = $e.attr('data-l1key'), l2 = $e.attr('data-l2key')
+        var v = l2 ? (obj[l1] || {})[l2] : obj[l1]
+        if (v === undefined) return
+        if ($e.is(':checkbox')) $e.prop('checked', !!v); else if ($e.is('span')) $e.text(v); else $e.val(v)
+      })
+      return this
+    }
+    /* Appels serveur : Node répond (testUrl -> JSON de test ; evalPath -> vrai daemon, via Node) */
+    $.ajax = function (o) {
+      window.__ajaxCalls.push(o.data)
+      window.__serve(o.data).then(function (res) {
+        if (res.error) o.success({ state: 'error', result: res.error }); else o.success({ state: 'ok', result: res.result })
+      })
+    }
+  </script>
+  <!-- desktop/js/jsonpoller.js est injecté par le test, après la substitution des {{textes}} que fait Jeedom -->
+</body>
+</html>

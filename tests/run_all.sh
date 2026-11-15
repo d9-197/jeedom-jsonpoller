@@ -22,6 +22,11 @@ step "Compilation Python" python3 -m py_compile resources/jsonpollerd/jsonpoller
 step "Tests Python (daemon)" python3 -I -m unittest discover -s tests/python
 step "Tests PHP (unitaires)" php tests/php/unit.php
 if [ "${1:-}" != "quick" ]; then
+  if [ -d tests/e2e/node_modules ] && (cd tests/e2e && node -e "require('playwright')" 2>/dev/null); then
+    step "Fenêtre de sélection (Chromium)" bash -c "cd tests/e2e && node --test explorer.e2e.js"
+  else
+    printf '\n==> Fenêtre de sélection (Chromium) : ignoré (cd tests/e2e && npm ci, et Playwright requis)\n'
+  fi
   step "Tests PHP (intégration avec le vrai daemon)" php tests/php/integration.php
 fi
 find . -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null

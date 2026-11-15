@@ -224,5 +224,6 @@ $eqLogics = eqLogic::byType($plugin->getId());
   </div>
 </div>
 
+<?php include_file('desktop', 'jsonpoller', 'css', 'jsonpoller'); ?>
 <?php include_file('desktop', 'jsonpoller', 'js', 'jsonpoller'); ?>
 <?php include_file('core', 'plugin.template', 'js'); ?>

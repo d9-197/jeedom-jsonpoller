@@ -232,6 +232,12 @@ test('configHash change quand une variable utilisée change', function () {
   truthy($h1 !== jsonpoller::configHash(jsonpoller::buildConfig()), 'doit changer');
 });
 
+echo "evalPath\n";
+test('evalPath : daemon absent => message explicite', function () {
+  Stubs::$config['socketport'] = 1;
+  throws(function () { jsonpoller::evalPath('{"a":1}', 'a'); }, 'pas joignable');
+});
+
 echo "sendToDaemon\n";
 test('daemon absent : exception explicite', function () {
   Stubs::$config['socketport'] = 1; // rien n'écoute

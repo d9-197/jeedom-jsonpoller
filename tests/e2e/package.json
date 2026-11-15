@@ -1,0 +1,11 @@
+{
+  "name": "jsonpoller-e2e",
+  "private": true,
+  "description": "Test navigateur de la fen\u00eatre de s\u00e9lection des valeurs (biblioth\u00e8ques proches de celles de Jeedom 4.4)",
+  "devDependencies": {
+    "bootbox": "4.4.0",
+    "bootstrap": "3.4.1",
+    "jquery": "3.7.1",
+    "@fortawesome/fontawesome-free": "5.15.4"
+  }
+}

@@ -19,6 +19,9 @@ try {
     );
     ajax::success($res);
   }
+  if (init('action') == 'evalPath') {
+    ajax::success(jsonpoller::evalPath(init('data'), init('path'), init('agg', 'first')));
+  }
   throw new Exception(__('Aucune méthode correspondante à', __FILE__) . ' : ' . init('action'));
 } catch (Exception $e) {
   ajax::error(displayException($e), $e->getCode());
