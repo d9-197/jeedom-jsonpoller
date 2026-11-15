@@ -43,7 +43,20 @@ pour une commande binaire ou numérique.
 
 Chaque commande a une option *Format* : **automatique** (selon le sous-type), **nombre** (`"0.00"`, `"1,5"` ou `"21.5 °C"` deviennent des nombres), **booléen** (`true`/`on`/`yes`/`1` → 1) ou **texte**. L'explorateur de JSON détecte les nombres écrits entre guillemets et préconfigure le format *nombre*.
 
-Commandes créées automatiquement : *Code HTTP*, *Erreur* (infos), *Rafraîchir* (action).
+Commandes créées automatiquement : *Code HTTP*, *Erreur*, *Dernière réponse OK* (infos), *Rafraîchir* (action).
+
+*Dernière réponse OK* contient la date/heure (`AAAA-MM-JJ hh:mm:ss`, heure du serveur) de la dernière scrutation réussie ;
+elle n'est pas mise à jour en cas d'erreur, ce qui permet de détecter une source muette
+(ex. dans un scénario : `time() - strtotime(#[Objet][Équipement][Dernière réponse OK]#) > 300`).
+Sur un équipement existant, la commande apparaît à la première réponse du daemon après la mise à jour.
+
+### Échecs et espacement des essais
+
+Si une source ne répond pas (réseau, timeout, HTTP ≥ 400, réponse non JSON), le daemon double le délai à chaque
+échec consécutif : période, 2×, 4×, 8×… plafonné à **5 minutes** (jamais en dessous de la période configurée).
+Dès qu'une réponse valide arrive, la période normale reprend. Le bouton *Rafraîchir* force un essai immédiat.
+Seul le premier échec est journalisé en `warning` (les suivants en `debug`) ; le retour à la normale est journalisé en `info`.
+Un chemin JSON introuvable n'est pas un échec de la source : la période n'est pas modifiée.
 
 ## Architecture
 

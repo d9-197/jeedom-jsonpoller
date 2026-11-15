@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 LOG = logging.getLogger("jsonpollerd")
 MIN_INTERVAL = 10
 MAX_BODY = 5 * 1024 * 1024
+MAX_BACKOFF = 300  # délai maximal (s) entre deux essais après des échecs consécutifs
 WORKERS = 8
 
 
@@ -117,6 +118,15 @@ def fetch(eq):
 # --------------------------------------------------------------------------
 # Planificateur
 # --------------------------------------------------------------------------
+def next_delay(interval, fails):
+    """Délai avant le prochain essai : la période normale tant que tout va bien,
+    puis doublement à chaque échec consécutif, plafonné à MAX_BACKOFF
+    (jamais en dessous de la période configurée)."""
+    if fails <= 0:
+        return interval
+    return max(interval, min(interval * (2 ** min(fails, 30)), MAX_BACKOFF))
+
+
 class Scheduler:
     def __init__(self, callback, apikey):
         self.callback = callback
@@ -133,7 +143,10 @@ class Scheduler:
             for cfg in equipments:
                 eid = str(cfg["id"])
                 old = self.state.get(eid)
-                st = old if old else {"next": 0.0, "running": False}
+                st = old if old else {"next": 0.0, "running": False, "fails": 0}
+                if old and (old["cfg"].get("url"), old["cfg"].get("method")) != (cfg.get("url"), cfg.get("method")):
+                    st["fails"] = 0
+                    st["next"] = 0.0
                 st["cfg"] = cfg
                 new[eid] = st
             self.state = new
@@ -168,7 +181,9 @@ class Scheduler:
     def _poll(self, st):
         cfg = st["cfg"]
         started = time.monotonic()
-        payload = {"eqId": cfg["id"], "http": 0, "error": "", "values": {}, "errors": {}}
+        interval = max(MIN_INTERVAL, int(cfg.get("interval", 30)))
+        payload = {"eqId": cfg["id"], "http": 0, "error": "", "values": {}, "errors": {}, "retry_in": 0}
+        ok = True
         try:
             code, data = fetch(cfg)
             payload["http"] = code
@@ -177,20 +192,36 @@ class Scheduler:
                     payload["values"][str(c["id"])] = extract(data, c["path"])
                 except PathError as e:
                     payload["errors"][str(c["id"])] = "%s (chemin '%s')" % (e, c["path"])
-            LOG.debug("%s : %d valeur(s) lue(s)", cfg.get("name"), len(payload["values"]))
         except Exception as e:
+            ok = False
             payload["http"] = getattr(e, "code", 0)
             payload["error"] = str(e)
-            LOG.warning("%s (%s) : %s", cfg.get("name"), cfg.get("url"), e)
+
+        # Backoff : calculé avant l'envoi pour pouvoir informer Jeedom
+        with self.lock:
+            previous = st.get("fails", 0)
+            st["fails"] = 0 if ok else previous + 1
+            delay = next_delay(interval, st["fails"])
+        payload["retry_in"] = delay if not ok else 0
+
+        name = cfg.get("name")
+        if ok:
+            if previous:
+                LOG.info("%s : source de nouveau disponible après %d échec(s)", name, previous)
+            LOG.debug("%s : %d valeur(s) lue(s)", name, len(payload["values"]))
+        elif previous == 0:
+            LOG.warning("%s (%s) : %s - nouvel essai dans %ds", name, cfg.get("url"), payload["error"], delay)
+        else:
+            LOG.debug("%s : échec n°%d (%s) - nouvel essai dans %ds", name, st["fails"], payload["error"], delay)
+
         try:
             self._send(payload)
         except Exception as e:
             LOG.warning("Callback Jeedom en échec : %s", e)
         finally:
-            interval = max(MIN_INTERVAL, int(cfg.get("interval", 30)))
             with self.lock:
                 st["running"] = False
-                st["next"] = max(time.monotonic(), started + interval)
+                st["next"] = max(time.monotonic(), started + delay)
             self.wake.set()
 
     def _send(self, payload):

@@ -148,10 +148,15 @@ class jsonpoller extends eqLogic {
     }
     $http = (int) ($_data['http'] ?? 0);
     $error = (string) ($_data['error'] ?? '');
+    if (!is_object($eq->getCmd(null, '_last_ok'))) {
+      $eq->createInternalCmds(); // équipement créé avant l'ajout de cette commande
+    }
     $eq->checkAndUpdateCmd('_http_status', $http);
     $eq->checkAndUpdateCmd('_error', $error);
-    if ($error !== '') {
-      log::add(__CLASS__, 'debug', $eq->getHumanName() . ' : ' . $error);
+    if ($error === '') {
+      $eq->checkAndUpdateCmd('_last_ok', date('Y-m-d H:i:s'));
+    } else {
+      log::add(__CLASS__, 'debug', $eq->getHumanName() . ' : ' . $error . ' (nouvel essai dans ' . (int) ($_data['retry_in'] ?? 0) . ' s)');
     }
     foreach (($_data['errors'] ?? array()) as $cmdId => $msg) {
       log::add(__CLASS__, 'warning', $eq->getHumanName() . ' (commande ' . $cmdId . ') : ' . $msg);
@@ -309,9 +314,15 @@ class jsonpoller extends eqLogic {
   }
 
   public function postSave() {
+    $this->createInternalCmds();
+  }
+
+  /** Crée les commandes internes manquantes (idempotent). */
+  public function createInternalCmds() {
     $defs = array(
       '_http_status' => array('Code HTTP', 'numeric'),
       '_error' => array('Erreur', 'string'),
+      '_last_ok' => array('Dernière réponse OK', 'string'),
     );
     foreach ($defs as $logicalId => $def) {
       $cmd = $this->getCmd(null, $logicalId);
