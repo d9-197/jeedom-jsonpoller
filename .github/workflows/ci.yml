@@ -36,6 +36,9 @@ jobs:
   python:
     name: Daemon (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    # Images Docker officielles : indépendant des versions de Python fournies par l'image du runner
+    # (ubuntu-latest n'offre plus Python 3.9, qui est celui de Debian 11, base minimale de Jeedom 4.4).
+    container: python:${{ matrix.python }}-slim
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -43,9 +46,6 @@ jobs:
         python: ['3.9', '3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
       - name: Tests du daemon
         run: python -I -m unittest discover -s tests/python -v
 
