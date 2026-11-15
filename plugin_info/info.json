@@ -1,0 +1,19 @@
+{
+  "id": "jsonpoller",
+  "name": "JSON Poller",
+  "description": "Scrute régulièrement (dès 10 s) des URLs retournant du JSON et alimente des commandes info à partir de valeurs choisies dans le JSON.",
+  "licence": "AGPL",
+  "author": "JSON Poller",
+  "require": "4.4.0",
+  "category": "programming",
+  "hasDependency": false,
+  "hasOwnDeamon": true,
+  "maxDependancyInstallTime": 5,
+  "changelog": "",
+  "documentation": "",
+  "display": "",
+  "specialAttributes": {
+    "object": [],
+    "user": []
+  }
+}
