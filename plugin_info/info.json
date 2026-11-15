@@ -3,17 +3,18 @@
   "name": "JSON Poller",
   "description": "Scrute régulièrement (dès 10 s) des URLs retournant du JSON et alimente des commandes info à partir de valeurs choisies dans le JSON.",
   "licence": "AGPL",
-  "author": "JSON Poller",
+  "author": "Duke9",
   "require": "4.4.0",
   "category": "programming",
   "hasDependency": false,
   "hasOwnDeamon": true,
   "maxDependancyInstallTime": 5,
-  "changelog": "",
-  "documentation": "",
+  "changelog": "https://github.com/d9-197/jeedom-jsonpoller/blob/main/CHANGELOG.md",
+  "documentation": "https://github.com/d9-197/jeedom-jsonpoller/blob/main/README.md",
   "display": "",
   "specialAttributes": {
     "object": [],
     "user": []
-  }
+  },
+  "version": "0.2.0"
 }

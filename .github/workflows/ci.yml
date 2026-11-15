@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   static:
-    name: Vérifications statiques
+    name: Interface JS et vérifications statiques
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -30,6 +30,10 @@ jobs:
           PY
       - name: Syntaxe JavaScript
         run: node --check desktop/js/jsonpoller.js
+      - name: Tests de l'interface JavaScript
+        run: node --test tests/js/*.test.js
+      - name: Cohérence des chemins JS <-> daemon Python
+        run: python3 -I -m unittest discover -s tests/python -p 'test_js_paths.py' -v
       - name: Compilation Python
         run: python3 -m py_compile resources/jsonpollerd/jsonpollerd.py tests/support/fake_services.py
 

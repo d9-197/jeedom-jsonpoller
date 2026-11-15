@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../../../core/php/core.inc.php';
 class jsonpoller extends eqLogic {
 
   const MIN_INTERVAL = 10;
+  const AGGREGATIONS = array('first', 'last', 'sum', 'avg', 'min', 'max', 'count', 'list');
 
   /* ------------------------------------------------------------------ */
   /* Daemon                                                              */
@@ -39,7 +40,13 @@ class jsonpoller extends eqLogic {
     $cmd .= ' --loglevel ' . escapeshellarg(log::convertLogLevel(log::getLogLevel(__CLASS__)));
     $cmd .= ' --socketport ' . (int) self::getPort();
     $cmd .= ' --callback ' . escapeshellarg(network::getNetworkAccess('internal', 'proto:127.0.0.1:port:comp') . '/plugins/jsonpoller/core/php/jeeJsonpoller.php');
-    $cmd .= ' --apikey ' . escapeshellarg(jeedom::getApiKey(__CLASS__));
+    // La clé API n'est pas passée en argument (visible dans `ps` et dans le log) : fichier 0600 lu puis supprimé par le daemon
+    $keyFile = jeedom::getTmpFolder(__CLASS__) . '/apikey';
+    $oldUmask = umask(0077);
+    file_put_contents($keyFile, jeedom::getApiKey(__CLASS__));
+    umask($oldUmask);
+    @chmod($keyFile, 0600);
+    $cmd .= ' --apikey-file ' . escapeshellarg($keyFile);
     $cmd .= ' --pid ' . escapeshellarg(jeedom::getTmpFolder(__CLASS__) . '/deamon.pid');
     log::add(__CLASS__, 'info', 'Lancement du daemon : ' . $cmd);
     exec($cmd . ' >> ' . log::getPathToLog(__CLASS__ . '_daemon') . ' 2>&1 &');
@@ -111,7 +118,83 @@ class jsonpoller extends eqLogic {
 
   /** Pousse la configuration de tous les équipements actifs au daemon. */
   public static function sendConfig() {
-    return self::sendToDaemon(array('cmd' => 'config', 'equipments' => self::buildConfig()));
+    $equipments = self::buildConfig();
+    $reply = self::sendToDaemon(array('cmd' => 'config', 'equipments' => $equipments));
+    cache::set('jsonpoller::config::hash', self::configHash($equipments));
+    return $reply;
+  }
+
+  public static function configHash($_equipments) {
+    return md5(json_encode($_equipments));
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Requête : authentification dédiée et étiquettes Jeedom              */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Remplace les étiquettes Jeedom d'un texte : #variable(nom)# (variables de scénario),
+   * #[Objet][Équipement][Commande]# et #id# (valeur d'une commande). Les retours à la ligne
+   * sont supprimés des valeurs insérées (pas d'injection d'en-têtes).
+   */
+  public static function resolveTags($_text) {
+    $_text = (string) $_text;
+    if (strpos($_text, '#') === false) {
+      return $_text;
+    }
+    $_text = preg_replace_callback('/#variable\(([^)]+)\)#/', function ($m) {
+      $d = dataStore::byTypeLinkIdKey('scenario', -1, trim($m[1]));
+      return is_object($d) ? preg_replace('/[\r\n]+/', '', (string) $d->getValue('')) : '';
+    }, $_text);
+    if (strpos($_text, '#') !== false) {
+      try {
+        $_text = cmd::cmdToValue($_text);
+      } catch (Exception $e) {
+        log::add(__CLASS__, 'warning', 'Étiquette Jeedom non résolue : ' . $e->getMessage());
+      }
+    }
+    return $_text;
+  }
+
+  /**
+   * Requête HTTP à partir de la configuration brute d'un équipement : résout les étiquettes
+   * (url, en-têtes, corps, identifiants) et ajoute l'en-tête Authorization selon authType
+   * (none | basic | bearer). Un en-tête Authorization saisi à la main est prioritaire.
+   */
+  public static function buildRequest($_conf) {
+    $headers = array();
+    foreach (self::parseHeaders($_conf['headers'] ?? '') as $k => $v) {
+      $headers[$k] = trim(preg_replace('/[\r\n]+/', '', self::resolveTags($v)));
+    }
+    $hasAuth = false;
+    foreach ($headers as $k => $v) {
+      if (strcasecmp($k, 'Authorization') === 0) {
+        $hasAuth = true;
+      }
+    }
+    if (!$hasAuth) {
+      switch ($_conf['authType'] ?? 'none') {
+        case 'basic':
+          $user = self::resolveTags($_conf['authUser'] ?? '');
+          $pass = self::resolveTags($_conf['authPassword'] ?? '');
+          if ($user !== '' || $pass !== '') {
+            $headers['Authorization'] = 'Basic ' . base64_encode($user . ':' . $pass);
+          }
+          break;
+        case 'bearer':
+          $token = trim(self::resolveTags($_conf['authToken'] ?? ''));
+          if ($token !== '') {
+            $headers['Authorization'] = 'Bearer ' . $token;
+          }
+          break;
+      }
+    }
+    return array(
+      'url' => preg_replace('/\s+/', '', self::resolveTags(trim((string) ($_conf['url'] ?? '')))),
+      'method' => strtoupper($_conf['method'] ?? 'GET') == 'POST' ? 'POST' : 'GET',
+      'headers' => $headers,
+      'body' => self::resolveTags((string) ($_conf['body'] ?? '')),
+    );
   }
 
   /** Configuration que le daemon doit connaître (équipements actifs avec une URL). */
@@ -124,19 +207,20 @@ class jsonpoller extends eqLogic {
         if ($cmd->getLogicalId() != '' || $path === '') {
           continue; // commandes internes (statut...) ou sans chemin
         }
-        $commands[] = array('id' => $cmd->getId(), 'path' => $path);
+        $agg = (string) $cmd->getConfiguration('agg', 'first');
+        $commands[] = array('id' => $cmd->getId(), 'path' => $path, 'agg' => in_array($agg, self::AGGREGATIONS, true) ? $agg : 'first');
       }
-      $url = trim((string) $eq->getConfiguration('url'));
-      if ($url == '') {
+      $req = self::buildRequest($eq->getConfiguration());
+      if ($req['url'] == '') {
         continue;
       }
       $equipments[] = array(
         'id' => $eq->getId(),
         'name' => $eq->getName(),
-        'url' => $url,
-        'method' => strtoupper($eq->getConfiguration('method', 'GET')),
-        'headers' => self::parseHeaders($eq->getConfiguration('headers', '')),
-        'body' => (string) $eq->getConfiguration('body', ''),
+        'url' => $req['url'],
+        'method' => $req['method'],
+        'headers' => $req['headers'],
+        'body' => $req['body'],
         'interval' => max(self::MIN_INTERVAL, (int) $eq->getConfiguration('interval', 30)),
         'timeout' => max(1, (int) $eq->getConfiguration('timeout', 10)),
         'verify_ssl' => (int) $eq->getConfiguration('verifySsl', 1) == 1,
@@ -213,6 +297,10 @@ class jsonpoller extends eqLogic {
     sort($known);
     if ($expected !== $known) {
       log::add(__CLASS__, 'warning', 'Configuration du daemon désynchronisée (attendu : ' . implode(',', $expected) . ' / connu : ' . implode(',', $known) . ') : renvoi de la configuration');
+      self::sendConfig();
+    } elseif (self::configHash(self::buildConfig()) !== (string) cache::byKey('jsonpoller::config::hash')->getValue('')) {
+      // une étiquette (#variable(..)#, #commande#) utilisée dans l'URL, les en-têtes ou les identifiants a changé
+      log::add(__CLASS__, 'debug', 'Configuration modifiée (étiquettes Jeedom) : renvoi au daemon');
       self::sendConfig();
     }
   }
@@ -426,9 +514,9 @@ class jsonpoller extends eqLogic {
   /** Crée les commandes internes manquantes (idempotent). */
   public function createInternalCmds() {
     $defs = array(
-      '_http_status' => array('Code HTTP', 'numeric'),
-      '_error' => array('Erreur', 'string'),
-      '_last_ok' => array('Dernière réponse OK', 'string'),
+      '_http_status' => array(__('Code HTTP', __FILE__), 'numeric'),
+      '_error' => array(__('Erreur', __FILE__), 'string'),
+      '_last_ok' => array(__('Dernière réponse OK', __FILE__), 'string'),
     );
     foreach ($defs as $logicalId => $def) {
       $cmd = $this->getCmd(null, $logicalId);
@@ -436,7 +524,7 @@ class jsonpoller extends eqLogic {
         $cmd = new jsonpollerCmd();
         $cmd->setLogicalId($logicalId);
         $cmd->setEqLogic_id($this->getId());
-        $cmd->setName(__($def[0], __FILE__));
+        $cmd->setName($def[0]);
         $cmd->setType('info');
         $cmd->setSubType($def[1]);
         $cmd->setIsVisible(0);

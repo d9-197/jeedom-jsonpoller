@@ -36,10 +36,30 @@ Jeedom le relance automatiquement s'il tombe (gestion automatique activée par d
 | `data.temperature` | clé imbriquée |
 | `items[0].value` | élément de tableau (`[-1]` = dernier) |
 | `$.a["clé.avec.point"]` | clé contenant des caractères spéciaux (`$` initial optionnel) |
+| `items[*].v` · `m.*.t` | **joker** : tous les éléments d'un tableau / toutes les valeurs d'un objet |
+| `items[?(@.id==3)].v` | **filtre** : éléments dont `@.id` vaut 3 |
 | *(vide)* | JSON entier |
 
-Objets/tableaux sélectionnés : remontés en texte JSON. Les booléens sont convertis en 0/1
-pour une commande binaire ou numérique.
+Filtres : `@.clé` (existence) ou `@.clé OP valeur` avec `==  !=  <  <=  >  >=` ; la valeur est un nombre, `true`/`false`/`null`
+ou un texte entre `"` ou `'` ; `"2"` et `2` sont considérés égaux. Les éléments qui n'ont pas la clé ne correspondent pas.
+Limites : pas de jokers ni de filtres imbriqués dans un filtre ; une valeur de filtre ne peut pas contenir `)]`.
+
+Quand un chemin avec joker ou filtre désigne **plusieurs valeurs**, le menu *Plusieurs valeurs* de la commande choisit :
+première, dernière, somme, moyenne, minimum, maximum, nombre, ou liste JSON. Les textes numériques (`"1,5"`) sont acceptés
+pour les calculs ; une sélection vide donne une erreur dans le log, sauf pour *nombre* (0) et *liste* (`[]`).
+Les objets/tableaux sélectionnés sont remontés en texte JSON. Les booléens sont convertis en 0/1 pour une commande
+binaire ou numérique.
+
+### Authentification et étiquettes Jeedom
+
+- **Authentification** : *Basic* (utilisateur / mot de passe) ou *Bearer* (jeton). Un en-tête `Authorization` saisi à la main
+  dans *En-têtes HTTP* est prioritaire. Les identifiants sont stockés dans la configuration de l'équipement
+  (base Jeedom, **en clair**, comme le reste de la configuration ; ils figurent donc dans les sauvegardes) mais ne sont
+  jamais écrits dans les logs du plugin.
+- **Étiquettes** acceptées dans l'URL, les en-têtes, le corps et les identifiants : `#variable(nom)#` (variable de scénario) et
+  `#[Objet][Équipement][Commande]#` ou `#id#` (valeur d'une commande). Utile pour un jeton renouvelé ou une adresse dynamique.
+  Les valeurs sont insérées telles quelles (sans encodage d'URL) et sans retour à la ligne. Un changement est transmis au
+  daemon **au plus tard 1 minute plus tard** (cron). Une variable inexistante donne une chaîne vide.
 
 ### Format de la valeur
 
@@ -106,8 +126,8 @@ Jeedom (PHP) ◀──POST core/php/jeeJsonpoller.php?apikey=…─────�
 
 ## Limites connues
 
-- Authentification : en-têtes HTTP uniquement (Bearer, Basic encodé à la main, clé d'API…).
-- Pas de filtres JSONPath avancés (`[?(@.x==1)]`, `*`).
+- Pas d'authentification OAuth, ni de certificats clients.
+- Filtres limités à une comparaison simple (pas de `&&`/`||`, pas de fonctions).
 - Testé : daemon (Python) en local avec faux serveur ; syntaxe PHP/JS vérifiée.
   **Non testé dans une instance Jeedom réelle** (interface, hooks `postAjax`, démarrage du daemon).
 
@@ -118,17 +138,23 @@ tests/run_all.sh          # tout (~40 s) : mêmes vérifications que la CI
 tests/run_all.sh quick    # sans le test d'intégration PHP (~10 s)
 ```
 
-Prérequis : `python3` (≥ 3.9), `php` (≥ 7.4, extension `posix`) et `node`. Aucune dépendance à installer (ni Composer ni pip).
+Prérequis : `python3` (≥ 3.9), `php` (≥ 7.4, extension `posix`) et `node` (≥ 18). Aucune dépendance à installer (ni Composer ni pip).
 
 | Suite | Contenu |
 |---|---|
-| `tests/python/` | daemon : chemins JSON, backoff, requêtes HTTP (délai total, gros corps, POST…), envoi différentiel, protocole socket, processus complet |
-| `tests/php/unit.php` | conversions de format, facteur/décalage, configuration envoyée au daemon, callback, commandes internes |
-| `tests/php/integration.php` | le **vrai daemon** piloté par la vraie classe PHP : démarrage, flux de valeurs, resynchronisation, gel + redémarrage automatique, arrêt |
+| `tests/python/` | daemon : chemins JSON (jokers, filtres, agrégations), backoff, requêtes HTTP (délai total, gros corps, POST…), envoi différentiel, protocole socket, clé API, processus complet ; couverture des traductions ; cohérence des chemins générés par l'interface JS |
+| `tests/js/` | interface : génération des chemins, détection du sous-type, lignes du tableau des commandes (faux jQuery, `node --test`) |
+| `tests/php/unit.php` | conversions de format, facteur/décalage, authentification, étiquettes Jeedom, configuration envoyée au daemon, callback, commandes internes |
+| `tests/php/integration.php` | le **vrai daemon** piloté par la vraie classe PHP : démarrage, clé API absente de la ligne de commande et des logs, jeton Bearer et variables, resynchronisation, gel + redémarrage automatique, arrêt |
 
 Les tests PHP utilisent un faux cœur Jeedom (`tests/php/stubs.php`) : ils vérifient la logique du plugin, **pas** l'intégration
 dans un vrai Jeedom (interface, cron, base de données). La CI GitHub (`.github/workflows/ci.yml`) les exécute sur Python 3.9/3.11/3.12
 et PHP 7.4/8.1/8.3 à chaque push et pull request.
+
+## Traductions
+
+Français (langue du code) et anglais (`core/i18n/en_US.json`). Un test vérifie que chaque texte `{{...}}` / `__('...', __FILE__)`
+a une traduction (et qu'aucune n'est orpheline) : après avoir ajouté un texte, ajoutez sa traduction.
 
 ## Licence
 

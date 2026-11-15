@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Services factices pour les tests d'intégration.
 
-  --source-port P : serveur JSON ; sert le contenu du fichier <dir>/source.json
+  --source-port P : serveur JSON ; sert <dir>/source.json et trace chaque requête (chemin, Authorization) dans <dir>/hits.jsonl
   --sink-port   Q : faux callback Jeedom ; ajoute chaque corps POST (une ligne JSON) à <dir>/sink.jsonl
 """
 import argparse
 import http.server
+import json
 import os
 import threading
 
@@ -23,6 +24,8 @@ def main():
             pass
 
         def do_GET(self):
+            with lock, open(os.path.join(a.dir, "hits.jsonl"), "a", encoding="utf-8") as h:
+                h.write(json.dumps({"path": self.path, "auth": self.headers.get("Authorization")}) + "\n")
             try:
                 with open(os.path.join(a.dir, "source.json"), "rb") as f:
                     body = f.read()

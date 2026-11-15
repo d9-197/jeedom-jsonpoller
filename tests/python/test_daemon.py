@@ -86,6 +86,96 @@ class ExtractTests(Base):
         self.assertEqual(d.extract([{"a": 1}, {"a": 2}], "[1].a"), 2)
 
 
+class ExtractAdvancedTests(Base):
+    DATA = {
+        "items": [
+            {"id": 1, "v": "1.5", "n": "a", "on": True},
+            {"id": 2, "v": "2,5", "n": "b"},
+            {"id": 3, "n": "c", "v": 4},
+        ],
+        "m": {"x": {"t": 1}, "y": {"t": 2}},
+    }
+
+    def check(self, cases):
+        for path, agg, expected in cases:
+            with self.subTest(path=path, agg=agg):
+                self.assertEqual(d.extract(self.DATA, path, agg), expected)
+
+    def test_wildcards(self):
+        self.check([
+            ("items[*].id", "list", [1, 2, 3]),
+            ("items.*.id", "list", [1, 2, 3]),
+            ("$.items[*].n", "first", "a"),
+            ("items[*].n", "last", "c"),
+            ("m.*.t", "list", [1, 2]),        # joker sur un objet : ses valeurs
+            ("items[*].v", "list", ["1.5", "2,5", 4]),   # les éléments sans la clé sont ignorés
+            ("items[*].on", "list", [True]),
+        ])
+
+    def test_filters(self):
+        self.check([
+            ("items[?(@.id==2)].n", "first", "b"),
+            ("items[?(@.id == 2)].n", "first", "b"),
+            ("items[?(@.n=='c')].v", "first", 4),
+            ('items[?(@.n=="c")].v', "first", 4),
+            ("items[?(@.id>1)].id", "list", [2, 3]),
+            ("items[?(@.id>=2)].id", "list", [2, 3]),
+            ("items[?(@.id<3)].id", "list", [1, 2]),
+            ("items[?(@.id!=2)].id", "list", [1, 3]),
+            ("items[?(@.on)].id", "list", [1]),            # existence de la clé
+            ("items[?(@.on==true)].id", "list", [1]),
+            ("items[?(@.v==4)].id", "list", [3]),
+            ("items[?(@.id==\"2\")].n", "first", "b"),     # "2" == 2 (texte contre nombre)
+            ("items[?(@.id==9)].v", "list", []),
+        ])
+
+    def test_aggregations(self):
+        self.check([
+            ("items[*].id", "sum", 6),
+            ("items[*].id", "avg", 2),
+            ("items[*].id", "min", 1),
+            ("items[*].id", "max", 3),
+            ("items[*].id", "count", 3),
+            ("items[*].v", "sum", 8.0),             # "1.5" + "2,5" + 4 (texte numérique accepté)
+            ("items[?(@.id==9)].v", "count", 0),
+            ("items[*].id", "unknown", 1),          # agrégation inconnue = première
+            ("items[*].id", None, 1),
+        ])
+
+    def test_no_wildcard_ignores_aggregation(self):
+        self.assertEqual(d.extract(self.DATA, "items[1].n", "sum"), "b")
+
+    def test_errors(self):
+        for path, agg in (("items[?(@.id==9)].v", "first"), ("items[?(@.id==9)].v", "avg"),
+                          ("items[*].n", "sum"), ("items[?(@.id=~1)].v", "first"),
+                          ("items[?(@.id==abc)].v", "first"), ("nope[*].id", "list"),
+                          ("items[?(@.items[*].x==1)].id", "list")):
+            with self.subTest(path=path, agg=agg):
+                with self.assertRaises(d.PathError):
+                    d.extract(self.DATA, path, agg)
+
+    def test_wildcard_on_scalar_selects_nothing(self):
+        self.assertEqual(d.extract({"a": 1}, "a[*]", "count"), 0)
+
+    def test_literal_star_key_still_works(self):
+        self.assertEqual(d.extract({"*": 5}, "*"), 5)
+        self.assertEqual(d.extract({"*": 5}, '["*"]'), 5)
+
+    def test_poll_uses_aggregation(self):
+        class H(quiet(http.server.BaseHTTPRequestHandler)):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps(ExtractAdvancedTests.DATA).encode())
+        srv, url = self.serve(H)
+        sched, sent = make_sched()
+        st = new_state({"id": 1, "name": "t", "url": url, "interval": 10, "timeout": 5, "commands": [
+            {"id": 1, "path": "items[*].id", "agg": "sum"}, {"id": 2, "path": "items[?(@.id==3)].n"}]})
+        st["running"] = True
+        sched._poll(st)
+        self.assertEqual(sent[0]["values"], {"1": 6, "2": "c"})
+
+
 # ---------------------------------------------------------------- backoff
 class NextDelayTests(Base):
     def test_sequence(self):
@@ -419,7 +509,8 @@ class ProcessTests(Base):
 
         class Sink(quiet(http.server.BaseHTTPRequestHandler)):
             def do_POST(self):
-                received.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+                received.append((self.path, self.headers.get("X-Jeedom-Apikey"),
+                                 json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"ok")
@@ -433,10 +524,14 @@ class ProcessTests(Base):
         src, src_url = self.serve(Src)
 
         port = free_port()
-        pidfile = os.path.join(tempfile.mkdtemp(), "d.pid")
+        tmp = tempfile.mkdtemp()
+        pidfile = os.path.join(tmp, "d.pid")
+        keyfile = os.path.join(tmp, "apikey")
+        with open(keyfile, "w") as f:
+            f.write("K\n")
         proc = subprocess.Popen(
             [sys.executable, os.path.join(DAEMON_DIR, "jsonpollerd.py"), "--loglevel", "debug",
-             "--socketport", str(port), "--callback", sink_url + "cb.php", "--apikey", "K", "--pid", pidfile],
+             "--socketport", str(port), "--callback", sink_url + "cb.php", "--apikey-file", keyfile, "--pid", pidfile],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         self.addCleanup(proc.stdout.close)
         self.addCleanup(lambda: proc.poll() is None and proc.kill())
@@ -465,14 +560,62 @@ class ProcessTests(Base):
         while not received and time.monotonic() < deadline:
             time.sleep(0.1)
         self.assertTrue(received, "aucun callback reçu")
-        path, body = received[0]
-        self.assertEqual(path, "/cb.php?apikey=K")
+        path, header_key, body = received[0]
+        self.assertEqual(path, "/cb.php")              # la clé n'est pas dans l'URL...
+        self.assertEqual(header_key, "K")              # ... mais dans un en-tête
+        self.assertFalse(os.path.exists(keyfile), "le fichier de clé doit être supprimé après lecture")
         self.assertEqual((body["eqId"], body["http"], body["error"]), (5, 200, ""))
         self.assertEqual(body["values"], {"1": "1.50", "2": "0.00"})
 
         proc.send_signal(signal.SIGTERM)
         self.assertEqual(proc.wait(timeout=10), 0)
         self.assertFalse(os.path.exists(pidfile), "le fichier pid doit être supprimé à l'arrêt")
+
+
+class CommandLineTests(Base):
+    def run_daemon(self, args, env=None):
+        e = dict(os.environ)
+        e.pop("JSONPOLLER_APIKEY", None)
+        e.update(env or {})
+        return subprocess.run([sys.executable, os.path.join(DAEMON_DIR, "jsonpollerd.py"), "--callback", "http://x/", *args],
+                              capture_output=True, text=True, timeout=15, env=e)
+
+    def test_apikey_is_required(self):
+        r = self.run_daemon([])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("clé API absente", r.stderr)
+
+    def test_apikey_is_not_accepted_on_the_command_line(self):
+        r = self.run_daemon(["--apikey", "SECRET"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("unrecognized arguments", r.stderr)
+
+    def test_unreadable_key_file(self):
+        r = self.run_daemon(["--apikey-file", "/nonexistent/key"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("lecture de la clé API impossible", r.stderr)
+
+    def test_environment_variable_is_accepted(self):
+        port = free_port()
+        proc = subprocess.Popen(
+            [sys.executable, os.path.join(DAEMON_DIR, "jsonpollerd.py"), "--callback", "http://x/", "--socketport", str(port)],
+            env=dict(os.environ, JSONPOLLER_APIKEY="ENVKEY"), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.addCleanup(proc.stdout.close)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=1) as s:
+                    s.sendall(b'{"apikey":"ENVKEY","cmd":"ping"}\n')
+                    with s.makefile() as f:
+                        self.assertTrue(json.loads(f.readline())["ok"])
+                break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            self.fail("le daemon n'écoute pas")
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=10)
 
 
 if __name__ == "__main__":

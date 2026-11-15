@@ -18,3 +18,13 @@ n'est utilisé qu'en local (127.0.0.1).
 
 Chaque commande info a un *chemin dans le JSON* : `data.temp`, `items[0].value`, `$.a["x.y"]`.
 Les erreurs de chemin ou HTTP sont visibles dans le log `jsonpoller` et dans les commandes « Code HTTP » / « Erreur ».
+
+## Authentification et étiquettes
+
+Basic ou Bearer dans l'équipement. L'URL, les en-têtes, le corps et les identifiants acceptent `#variable(nom)#` et
+`#[Objet][Équipement][Commande]#` (prise en compte sous 1 minute).
+
+## Plusieurs valeurs
+
+Un chemin avec joker (`items[*].v`) ou filtre (`items[?(@.id==3)].v`) peut désigner plusieurs valeurs : le menu
+« Plusieurs valeurs » de la commande choisit première, dernière, somme, moyenne, minimum, maximum, nombre ou liste JSON.

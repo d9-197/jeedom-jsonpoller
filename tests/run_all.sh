@@ -17,6 +17,7 @@ print("ok :", info["id"], "- Jeedom >=", info["require"])
 PY
 step "Syntaxe PHP" bash -c "find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l >/dev/null"
 step "Syntaxe JS"  node --check desktop/js/jsonpoller.js
+step "Tests JS (interface)" node --test tests/js/*.test.js
 step "Compilation Python" python3 -m py_compile resources/jsonpollerd/jsonpollerd.py tests/support/fake_services.py
 step "Tests Python (daemon)" python3 -I -m unittest discover -s tests/python
 step "Tests PHP (unitaires)" php tests/php/unit.php

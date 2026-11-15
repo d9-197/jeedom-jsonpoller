@@ -19,6 +19,16 @@ function addCmdToTable(_cmd) {
   tr += '<td>'
   if (!isAction && init(_cmd.logicalId) == '') {
     tr += '<input class="cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="jsonPath" placeholder="ex : data.temperature  ou  items[0].value">'
+    tr += '<select class="cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="agg" style="margin-top:5px;" title="{{Si le chemin contient un joker [*] ou un filtre [?(...)] et désigne plusieurs valeurs}}">'
+    tr += '<option value="first">{{Plusieurs valeurs : la première}}</option>'
+    tr += '<option value="last">{{Plusieurs valeurs : la dernière}}</option>'
+    tr += '<option value="sum">{{Plusieurs valeurs : somme}}</option>'
+    tr += '<option value="avg">{{Plusieurs valeurs : moyenne}}</option>'
+    tr += '<option value="min">{{Plusieurs valeurs : minimum}}</option>'
+    tr += '<option value="max">{{Plusieurs valeurs : maximum}}</option>'
+    tr += '<option value="count">{{Plusieurs valeurs : nombre}}</option>'
+    tr += '<option value="list">{{Plusieurs valeurs : liste JSON}}</option>'
+    tr += '</select>'
     tr += '<select class="cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="format" style="margin-top:5px;" title="{{Conversion de la valeur JSON avant écriture dans la commande}}">'
     tr += '<option value="auto">{{Format : automatique (selon le sous-type)}}</option>'
     tr += '<option value="number">{{Format : nombre (&quot;0.00&quot; ou &quot;1,5&quot; → nombre)}}</option>'
@@ -61,18 +71,53 @@ function addCmdToTable(_cmd) {
   jeedom.cmd.changeType($tr, init(_cmd.subType))
 }
 
+/* ---------- Authentification : champs affichés selon le type ---------- */
+function toggleAuthFields() {
+  var type = $('.eqLogicAttr[data-l1key=configuration][data-l2key=authType]').value()
+  $('.authBasic').toggle(type === 'basic')
+  $('.authBearer').toggle(type === 'bearer')
+}
+$('.eqLogicAttr[data-l1key=configuration][data-l2key=authType]').off('change').on('change', toggleAuthFields)
+function printEqLogic(_eqLogic) {
+  toggleAuthFields()
+}
+
 /* ---------- Explorateur JSON ---------- */
+/* Sous-type et format proposés pour une valeur : les nombres écrits entre guillemets ("0.00") deviennent numériques. */
+function jsonSubType(value) {
+  var numStr = typeof value === 'string' && /^\s*[+-]?\d+([.,]\d+)?\s*$/.test(value)
+  if (typeof value === 'number' || numStr) return { subType: 'numeric', format: numStr ? 'number' : 'auto' }
+  if (typeof value === 'boolean') return { subType: 'binary', format: 'auto' }
+  return { subType: 'string', format: 'auto' }
+}
+
+/* Nom de commande proposé pour un chemin : items[0].temp -> temp, a["x"] -> x, list[2] -> list_2 */
+function jsonCmdName(path) {
+  var m = path.match(/(?:\["([^"]*)"\]|\['([^']*)'\]|([^.\[\]]+))((?:\[-?\d+\])*)$/)
+  if (!m) return 'valeur'
+  var base = m[1] !== undefined ? m[1] : (m[2] !== undefined ? m[2] : m[3])
+  return (base + (m[4] || '').replace(/\[(-?\d+)\]/g, '_$1')) || 'valeur'
+}
+
+/* Chemin de l'enfant `key` de `parent`, dans la syntaxe comprise par le daemon. Retourne null si la clé est inexprimable
+   (elle contient à la fois " et '). */
 function jsonPathKey(parent, key) {
   if (typeof key === 'number') return parent + '[' + key + ']'
-  if (/^[^.\[\]"']+$/.test(key)) return parent === '' ? key : parent + '.' + key
-  return parent + '["' + key + '"]'
+  var plain = /^[^.\[\]"']+$/.test(key) && key === key.trim() && key !== '*' && !(parent === '' && key.charAt(0) === '$')
+  if (plain) return parent === '' ? key : parent + '.' + key
+  if (key.indexOf('"') === -1) return parent + '["' + key + '"]'
+  if (key.indexOf("'") === -1) return parent + "['" + key + "']"
+  return null
 }
 
 function flattenJson(node, path, out, limit) {
   if (out.length >= limit) return
   if (node !== null && typeof node === 'object') {
     var keys = Array.isArray(node) ? node.slice(0, 50).map(function (_, i) { return i }) : Object.keys(node)
-    keys.forEach(function (k) { flattenJson(node[k], jsonPathKey(path, k), out, limit) })
+    keys.forEach(function (k) {
+      var childPath = jsonPathKey(path, k)
+      if (childPath !== null) flattenJson(node[k], childPath, out, limit)
+    })
   } else {
     out.push({ path: path, value: node })
   }
@@ -94,6 +139,10 @@ $('#bt_exploreJson').off('click').on('click', function () {
       method: attr('method').value(),
       headers: attr('headers').value(),
       body: attr('body').value(),
+      authType: attr('authType').value(),
+      authUser: attr('authUser').value(),
+      authPassword: attr('authPassword').value(),
+      authToken: attr('authToken').value(),
       timeout: attr('timeout').value() || 10,
       verifySsl: attr('verifySsl').is(':checked') ? 1 : 0
     },
@@ -113,7 +162,8 @@ $('#bt_exploreJson').off('click').on('click', function () {
       html += '<div style="max-height:420px;overflow:auto;"><table class="table table-condensed table-hover" id="table_jsonValues"><thead><tr><th>{{Chemin}}</th><th>{{Valeur}}</th></tr></thead><tbody>'
       rows.forEach(function (r) {
         var v = r.value === null ? 'null' : String(r.value)
-        html += '<tr class="cursor jsonRow" data-path="' + $('<i>').text(r.path).html().replace(/"/g, '&quot;') + '" data-type="' + (typeof r.value) + '" data-numstr="' + (typeof r.value === 'string' && /^\s*[+-]?\d+([.,]\d+)?\s*$/.test(r.value) ? 1 : 0) + '">'
+        var guess = jsonSubType(r.value)
+        html += '<tr class="cursor jsonRow" data-path="' + $('<i>').text(r.path).html().replace(/"/g, '&quot;') + '" data-subtype="' + guess.subType + '" data-format="' + guess.format + '">'
         html += '<td><code>' + $('<i>').text(r.path === '' ? '(racine)' : r.path).html() + '</code></td>'
         html += '<td>' + $('<i>').text(v.length > 120 ? v.substr(0, 120) + '…' : v).html() + '</td></tr>'
       })
@@ -133,13 +183,9 @@ $('#bt_exploreJson').off('click').on('click', function () {
       })
       dlg.on('click', 'tr.jsonRow', function () {
         var path = $(this).attr('data-path')
-        var type = $(this).attr('data-type')
-        var numStr = $(this).attr('data-numstr') == '1'
-        var subType = (type === 'number' || numStr) ? 'numeric' : (type === 'boolean' ? 'binary' : 'string')
-        var name = path.replace(/\[(\d+)\]/g, '_$1').split('.').pop().replace(/[\["\]]/g, '') || 'valeur'
         addCmdToTable({
-          type: 'info', subType: subType, name: name, isVisible: 1,
-          configuration: { jsonPath: path, format: numStr ? 'number' : 'auto' }
+          type: 'info', subType: $(this).attr('data-subtype'), name: jsonCmdName(path), isVisible: 1,
+          configuration: { jsonPath: path, format: $(this).attr('data-format') }
         })
         $('.cmd:last .cmdAttr[data-l1key=type]').val('info')
         modifyWithoutSave = true

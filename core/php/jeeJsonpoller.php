@@ -2,7 +2,9 @@
 /* Callback appelé par le daemon pour remonter les valeurs. */
 require_once __DIR__ . '/../../../../core/php/core.inc.php';
 
-if (!jeedom::apiAccess(init('apikey'), 'jsonpoller')) {
+// Clé API dans un en-tête (une clé dans l'URL finirait dans les journaux d'accès du serveur web)
+$apikey = $_SERVER['HTTP_X_JEEDOM_APIKEY'] ?? init('apikey');
+if (!jeedom::apiAccess($apikey, 'jsonpoller')) {
   echo 'Clé API non valide';
   die();
 }

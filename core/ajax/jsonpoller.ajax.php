@@ -8,9 +8,13 @@ try {
   ajax::init();
 
   if (init('action') == 'testUrl') {
-    $headers = jsonpoller::parseHeaders(init('headers'));
+    $req = jsonpoller::buildRequest(array(
+      'url' => init('url'), 'method' => init('method', 'GET'), 'headers' => init('headers'), 'body' => init('body'),
+      'authType' => init('authType', 'none'), 'authUser' => init('authUser'),
+      'authPassword' => init('authPassword'), 'authToken' => init('authToken'),
+    ));
     $res = jsonpoller::fetchUrl(
-      init('url'), init('method', 'GET'), $headers, init('body'),
+      $req['url'], $req['method'], $req['headers'], $req['body'],
       (int) init('timeout', 10), init('verifySsl', 1) == 1
     );
     ajax::success($res);

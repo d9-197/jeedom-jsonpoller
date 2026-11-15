@@ -92,7 +92,7 @@ test('buildConfig : équipements actifs avec URL, commandes avec chemin, bornes'
   $e = $cfg[0];
   same(array(1, 'http://x/a', 'POST', 10, 1, false), array($e['id'], $e['url'], $e['method'], $e['interval'], $e['timeout'], $e['verify_ssl']));
   same(array('X-K' => 'v'), $e['headers']);
-  same(array(array('id' => 10, 'path' => 'data.t')), $e['commands']);
+  same(array(array('id' => 10, 'path' => 'data.t', 'agg' => 'first')), $e['commands']);
 });
 
 echo "cycle de vie\n";
@@ -156,6 +156,80 @@ test('équipement inconnu : sans effet ; commande interne créée à la volée',
   $eq = makeEq(1, array('url' => 'http://x'));
   jsonpoller::handleCallback(array('eqId' => 1, 'http' => 200, 'error' => '', 'values' => array()));
   truthy($eq->getCmd(null, '_last_ok') !== null, '_last_ok doit être créée pour un équipement existant');
+});
+
+echo "resolveTags\n";
+test('resolveTags : variables, commandes, texte inchangé', function () {
+  Stubs::$vars = array('tok' => 'abc', 'multi' => "a\r\nb");
+  Stubs::$cmdValues = array('42' => 21.5, '[Salon][Temp][T]' => 'chaud');
+  same('http://x/y', jsonpoller::resolveTags('http://x/y'));
+  same('', jsonpoller::resolveTags(''));
+  same('k=abc&v=21.5', jsonpoller::resolveTags('k=#variable(tok)#&v=#42#'));
+  same('chaud !', jsonpoller::resolveTags('#[Salon][Temp][T]# !'));
+  same('ab', jsonpoller::resolveTags('#variable(multi)#'));                 // pas de retour à la ligne injecté
+  same('', jsonpoller::resolveTags('#variable(inconnue)#'));                // variable inexistante : vide
+  same('page#ancre', jsonpoller::resolveTags('page#ancre'));                // un # isolé n'est pas une étiquette
+});
+
+echo "buildRequest\n";
+test('buildRequest : sans authentification, méthode et corps', function () {
+  Stubs::$vars = array('b' => 'XYZ');
+  $r = jsonpoller::buildRequest(array('url' => " http://x/a b \n", 'method' => 'post', 'body' => 'q=#variable(b)#', 'headers' => "X-A: 1"));
+  same('http://x/ab', $r['url']);                    // espaces et retours supprimés
+  same('POST', $r['method']);
+  same('q=XYZ', $r['body']);
+  same(array('X-A' => '1'), $r['headers']);
+  same('GET', jsonpoller::buildRequest(array('url' => 'http://x', 'method' => 'DELETE'))['method']);   // méthode inconnue => GET
+  same('GET', jsonpoller::buildRequest(array('url' => 'http://x'))['method']);
+});
+test('buildRequest : Basic', function () {
+  $r = jsonpoller::buildRequest(array('url' => 'http://x', 'authType' => 'basic', 'authUser' => 'alice', 'authPassword' => 'p:ss'));
+  same('Basic ' . base64_encode('alice:p:ss'), $r['headers']['Authorization']);
+  $r = jsonpoller::buildRequest(array('url' => 'http://x', 'authType' => 'basic', 'authUser' => '', 'authPassword' => ''));
+  same(array(), $r['headers'], 'identifiants vides : pas d\'en-tête');
+});
+test('buildRequest : Bearer, avec variable', function () {
+  Stubs::$vars = array('tok' => 'T0K');
+  $r = jsonpoller::buildRequest(array('url' => 'http://x', 'authType' => 'bearer', 'authToken' => ' #variable(tok)# '));
+  same('Bearer T0K', $r['headers']['Authorization']);
+  $r = jsonpoller::buildRequest(array('url' => 'http://x', 'authType' => 'bearer', 'authToken' => ''));
+  same(array(), $r['headers']);
+});
+test('buildRequest : un en-tête Authorization saisi à la main est prioritaire', function () {
+  $r = jsonpoller::buildRequest(array('url' => 'http://x', 'headers' => 'authorization: Custom 1', 'authType' => 'bearer', 'authToken' => 'T'));
+  same(array('authorization' => 'Custom 1'), $r['headers']);
+});
+test('buildRequest : étiquettes dans les en-têtes', function () {
+  Stubs::$cmdValues = array('7' => 'v7');
+  $r = jsonpoller::buildRequest(array('url' => 'http://x', 'headers' => "X-Key: #7#"));
+  same(array('X-Key' => 'v7'), $r['headers']);
+});
+
+echo "buildConfig (authentification, étiquettes, agrégation)\n";
+test('buildConfig : Authorization, étiquettes résolues, agrégation', function () {
+  Stubs::$vars = array('host' => '10.0.0.5', 'tok' => 'T1');
+  $a = makeEq(1, array('url' => 'http://#variable(host)#/api', 'authType' => 'bearer', 'authToken' => '#variable(tok)#'));
+  makeCmd($a, 10, 'numeric', array('jsonPath' => 'items[*].v', 'agg' => 'sum'));
+  makeCmd($a, 11, 'numeric', array('jsonPath' => 'x', 'agg' => 'n_importe_quoi'));
+  makeCmd($a, 12, 'numeric', array('jsonPath' => 'y'));
+  makeEq(2, array('url' => '#variable(vide)#'));                      // URL résolue vide : ignoré
+  $cfg = jsonpoller::buildConfig();
+  same(1, count($cfg));
+  same('http://10.0.0.5/api', $cfg[0]['url']);
+  same(array('Authorization' => 'Bearer T1'), $cfg[0]['headers']);
+  same(array(
+    array('id' => 10, 'path' => 'items[*].v', 'agg' => 'sum'),
+    array('id' => 11, 'path' => 'x', 'agg' => 'first'),               // valeur inconnue : première
+    array('id' => 12, 'path' => 'y', 'agg' => 'first'),
+  ), $cfg[0]['commands']);
+});
+test('configHash change quand une variable utilisée change', function () {
+  Stubs::$vars = array('tok' => 'A');
+  makeEq(1, array('url' => 'http://x', 'authType' => 'bearer', 'authToken' => '#variable(tok)#'));
+  $h1 = jsonpoller::configHash(jsonpoller::buildConfig());
+  same($h1, jsonpoller::configHash(jsonpoller::buildConfig()), 'stable sans changement');
+  Stubs::$vars['tok'] = 'B';
+  truthy($h1 !== jsonpoller::configHash(jsonpoller::buildConfig()), 'doit changer');
 });
 
 echo "sendToDaemon\n";

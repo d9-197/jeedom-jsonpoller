@@ -32,7 +32,9 @@ function sinkLines() {
 function addEq($id) {
   $eq = new jsonpoller();
   $eq->setId($id)->setName("eq$id")->setIsEnable(1);
-  $eq->setConfiguration('url', Stubs::$config['sourceUrl']);
+  $eq->setConfiguration('url', Stubs::$config['sourceUrl'] . '?k=#variable(k)#');
+  $eq->setConfiguration('authType', 'bearer');
+  $eq->setConfiguration('authToken', '#variable(tok)#');
   $eq->setConfiguration('interval', 10);
   Stubs::$eqs[$id] = $eq;
   $c = new jsonpollerCmd();
@@ -47,6 +49,12 @@ Stubs::$config['socketport'] = freePort();
 Stubs::$config['callbackBase'] = "http://127.0.0.1:$sinkPort";
 Stubs::$config['sourceUrl'] = "http://127.0.0.1:$sourcePort/";
 file_put_contents(SANDBOX . '/source.json', '{"Irms":"1.50","power":"0.00"}');
+Stubs::$vars = array('k' => 'K1', 'tok' => 'T1');
+function hits() {
+  $f = SANDBOX . '/hits.jsonl';
+  if (!file_exists($f)) return array();
+  return array_map(function ($l) { return json_decode($l, true); }, array_filter(explode("\n", file_get_contents($f))));
+}
 
 $services = proc_open(
   array('python3', REPO . '/tests/support/fake_services.py', '--dir', SANDBOX, '--source-port', (string) $sourcePort, '--sink-port', (string) $sinkPort),
@@ -71,6 +79,37 @@ test('deamon_start lance le daemon, lui envoie la configuration, les valeurs arr
   same(200, $first['http']);
   same(array('10' => '1.50'), $first['values']);
   same('', $first['error']);
+});
+
+test('la clé API n\'est ni dans la ligne de commande, ni dans les logs ; le fichier de clé est supprimé', function () {
+  $cmdline = str_replace("\0", ' ', file_get_contents('/proc/' . pidOf() . '/cmdline'));
+  truthy(strpos($cmdline, 'KEY') === false, 'clé API visible dans la ligne de commande : ' . $cmdline);
+  truthy(strpos($cmdline, '--apikey-file') !== false, '--apikey-file attendu');
+  truthy(strpos(implode("\n", Stubs::$logs), 'KEY') === false, 'clé API présente dans les logs');
+  waitFor(function () { return !file_exists(SANDBOX . '/tmp/apikey'); }, 5, 'suppression du fichier de clé');
+});
+
+test('authentification Bearer et étiquettes : la source reçoit le jeton et l\'URL résolus', function () {
+  $h = waitFor(function () { $x = hits(); return $x ? $x[0] : null; }, 15, 'première requête vers la source');
+  same('Bearer T1', $h['auth']);
+  same('/?k=K1', $h['path']);
+});
+
+test('variable modifiée : le watchdog renvoie la configuration, la source reçoit les nouvelles valeurs', function () {
+  Stubs::$vars = array('k' => 'K2', 'tok' => 'T2');
+  Stubs::$logs = array();
+  jsonpoller::watchdog();
+  truthy(strpos(implode("\n", Stubs::$logs), 'Configuration modifiée') !== false, 'renvoi de configuration non journalisé');
+  same(jsonpoller::configHash(jsonpoller::buildConfig()), Stubs::$cache['jsonpoller::config::hash']);
+  jsonpoller::sendToDaemon(array('cmd' => 'refresh', 'id' => 1));
+  $h = waitFor(function () {
+    foreach (hits() as $x) { if ($x['auth'] === 'Bearer T2') return $x; }
+    return null;
+  }, 15, 'requête avec le nouveau jeton');
+  same('/?k=K2', $h['path']);
+  Stubs::$logs = array();
+  jsonpoller::watchdog();
+  same(array(), Stubs::$logs, 'plus de renvoi tant que rien ne change');
 });
 
 test('watchdog : daemon sain et configuration alignée => aucune action', function () {

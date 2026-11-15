@@ -110,7 +110,9 @@ $eqLogics = eqLogic::byType($plugin->getId());
 
                 <legend><i class="fas fa-globe"></i> {{Source JSON}}</legend>
                 <div class="form-group">
-                  <label class="col-sm-4 control-label">{{URL}}</label>
+                  <label class="col-sm-4 control-label">{{URL}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Étiquettes Jeedom acceptées (URL, en-têtes, corps, identifiants) : #variable(nom)# pour une variable, #[Objet][Équipement][Commande]# pour la valeur d'une commande. Prises en compte au plus tard 1 minute après un changement.}}"></i></sup>
+                  </label>
                   <div class="col-sm-6">
                     <input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="url" placeholder="http://192.168.1.10/api/status"/>
                   </div>
@@ -144,6 +146,36 @@ $eqLogics = eqLogic::byType($plugin->getId());
                   </label>
                   <div class="col-sm-6">
                     <textarea class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="headers" rows="3"></textarea>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="col-sm-4 control-label">{{Authentification}}</label>
+                  <div class="col-sm-4">
+                    <select class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="authType">
+                      <option value="none">{{Aucune}}</option>
+                      <option value="basic">{{Basic (utilisateur / mot de passe)}}</option>
+                      <option value="bearer">{{Bearer (jeton)}}</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="form-group authBasic" style="display:none;">
+                  <label class="col-sm-4 control-label">{{Utilisateur}}</label>
+                  <div class="col-sm-4">
+                    <input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="authUser" autocomplete="off"/>
+                  </div>
+                </div>
+                <div class="form-group authBasic" style="display:none;">
+                  <label class="col-sm-4 control-label">{{Mot de passe}}</label>
+                  <div class="col-sm-4">
+                    <input type="password" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="authPassword" autocomplete="new-password"/>
+                  </div>
+                </div>
+                <div class="form-group authBearer" style="display:none;">
+                  <label class="col-sm-4 control-label">{{Jeton}}
+                    <sup><i class="fas fa-question-circle tooltips" title="{{Envoyé dans l'en-tête Authorization: Bearer. Pour un jeton renouvelé, utilisez une variable : #variable(mon_jeton)#}}"></i></sup>
+                  </label>
+                  <div class="col-sm-6">
+                    <input type="password" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="authToken" autocomplete="new-password"/>
                   </div>
                 </div>
                 <div class="form-group">

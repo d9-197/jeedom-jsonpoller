@@ -41,44 +41,172 @@ class PathError(Exception):
 
 
 _TOKEN = re.compile(
-    r"""\.?\[(-?\d+)\]"""              # [0] / [-1]
-    r"""|\.?\["([^"]*)"\]"""           # ["clé"]
-    r"""|\.?\['([^']*)'\]"""           # ['clé']
-    r"""|\.?([^.\[\]]+)"""             # clé simple
+    r"""\.?\[\?\((.*?)\)\]"""        # 1 : filtre  [?(@.id==3)]
+    r"""|\.?\[\*\]|\.\*"""            # joker      [*]  ou  .*
+    r"""|\.?\[(-?\d+)\]"""            # 2 : index  [0] / [-1]
+    r"""|\.?\["([^"]*)"\]"""          # 3 : clé    ["a.b"]
+    r"""|\.?\['([^']*)'\]"""          # 4 : clé    ['a.b']
+    r"""|\.?([^.\[\]]+)"""            # 5 : clé simple
 )
+_FILTER = re.compile(r"^\s*@((?:\.[^\s=!<>]+|\[[^\]]*\])*)\s*(?:(==|!=|<=|>=|<|>)\s*(.+?))?\s*$")
+AGGREGATIONS = ("first", "last", "sum", "avg", "min", "max", "count", "list")
 
 
-def extract(data, path):
+def _num(v):
+    """Nombre (ou chaîne numérique, virgule acceptée) -> float/int ; sinon None."""
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return v
+    if isinstance(v, str):
+        try:
+            return float(v.strip().replace(",", "."))
+        except ValueError:
+            return None
+    return None
+
+
+def _loose_eq(a, b):
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    if isinstance(a, (int, float)) != isinstance(b, (int, float)):   # nombre contre texte : "3" == 3
+        x, y = _num(a), _num(b)
+        return x is not None and y is not None and x == y
+    return a == b
+
+
+def _compare(a, op, b):
+    if op == "==":
+        return _loose_eq(a, b)
+    if op == "!=":
+        return not _loose_eq(a, b)
+    x, y = _num(a), _num(b)
+    if x is None or y is None:
+        if isinstance(a, str) and isinstance(b, str):
+            x, y = a, b
+        else:
+            return False
+    return {"<": x < y, "<=": x <= y, ">": x > y, ">=": x >= y}[op]
+
+
+def _has_multi(path):
+    """Le chemin contient-il un joker ou un filtre ?"""
+    pos = 0
+    while pos < len(path):
+        m = _TOKEN.match(path, pos)
+        if not m:
+            return False
+        if m.group(1) is not None or all(g is None for g in m.groups()):
+            return True
+        pos = m.end()
+    return False
+
+
+def _match(item, expr):
+    """Prédicat de filtre : @.cle  (existence)  ou  @.cle OP valeur."""
+    m = _FILTER.match(expr)
+    if not m:
+        raise PathError("filtre invalide : '%s'" % expr)
+    sub, op, lit = m.groups()
+    if _has_multi(sub):                 # erreur de syntaxe : détectée même si aucune clé n'existe
+        raise PathError("jokers et filtres interdits dans un filtre : '%s'" % expr)
+    try:
+        nodes, _ = select(item, sub)
+    except PathError:
+        return False                    # l'élément n'a pas cette clé : il ne correspond pas
+    if not nodes:
+        return False
+    if op is None:
+        return True
+    if len(lit) >= 2 and lit[0] == lit[-1] == "'":
+        value = lit[1:-1]
+    else:
+        try:
+            value = json.loads(lit)
+        except ValueError:
+            raise PathError("valeur de filtre invalide : '%s'" % lit)
+    return _compare(nodes[0], op, value)
+
+
+def _child(cur, idx, key, step):
+    try:
+        if idx is not None:
+            if not isinstance(cur, list):   # ne pas indexer une chaîne ("abc"[0] = "a")
+                raise TypeError
+            return cur[int(idx)]
+        if not isinstance(cur, dict):
+            raise TypeError
+        return cur[key]
+    except (KeyError, IndexError):
+        raise PathError("introuvable : '%s'" % step)
+    except TypeError:
+        raise PathError("'%s' impossible sur une valeur de type %s" % (step, type(cur).__name__))
+
+
+def select(data, path):
+    """Retourne (noeuds, multiple). multiple=True si le chemin contient un joker ou un filtre."""
     path = (path or "").strip()
     if path.startswith("$"):
         path = path[1:]
-    cur = data
-    pos = 0
+    nodes, multi, pos = [data], False, 0
     while pos < len(path):
         m = _TOKEN.match(path, pos)
         if not m:
             raise PathError("chemin invalide près de '%s'" % path[pos:])
         pos = m.end()
-        idx, dq, sq, key = m.groups()
+        flt, idx, dq, sq, key = m.groups()
         step = m.group(0).lstrip(".")
-        if idx is None:
-            k = dq if dq is not None else sq if sq is not None else key
-            if isinstance(cur, list) and dq is None and sq is None and re.fullmatch(r"-?\d+", k):
-                idx = k  # "list.1.v" : index écrit comme une clé
-        try:
-            if idx is not None:
-                if not isinstance(cur, list):   # ne pas indexer une chaîne ("abc"[0] = "a")
-                    raise TypeError
-                cur = cur[int(idx)]
-            else:
-                if not isinstance(cur, dict):
-                    raise TypeError
-                cur = cur[k]
-        except (KeyError, IndexError):
-            raise PathError("introuvable : '%s'" % step)
-        except TypeError:
-            raise PathError("'%s' impossible sur une valeur de type %s" % (step, type(cur).__name__))
-    return cur
+        if flt is not None or all(g is None for g in m.groups()):      # filtre ou joker
+            multi = True
+            nxt = []
+            for n in nodes:
+                if isinstance(n, list):
+                    items = n
+                elif isinstance(n, dict) and flt is None:
+                    items = list(n.values())
+                else:
+                    continue
+                nxt.extend(items if flt is None else [i for i in items if _match(i, flt)])
+            nodes = nxt
+            continue
+        k = dq if dq is not None else sq if sq is not None else key
+        nxt = []
+        for n in nodes:
+            i = idx
+            if i is None and isinstance(n, list) and dq is None and sq is None and re.fullmatch(r"-?\d+", k):
+                i = k  # "list.1.v" : index écrit comme une clé
+            try:
+                nxt.append(_child(n, i, k, step))
+            except PathError:
+                if not multi:
+                    raise
+                # sélection multiple : les éléments qui n'ont pas la clé sont simplement ignorés
+        nodes = nxt
+    return nodes, multi
+
+
+def aggregate(values, agg):
+    if agg == "list":
+        return values
+    if agg == "count":
+        return len(values)
+    if agg in ("sum", "avg", "min", "max"):
+        nums = [n for n in map(_num, values) if n is not None]
+        if not nums:
+            raise PathError("aucune valeur numérique à agréger (%s)" % agg)
+        r = {"sum": sum, "avg": lambda x: sum(x) / len(x), "min": min, "max": max}[agg](nums)
+        return round(r, 10) if isinstance(r, float) else r
+    if not values:                       # first / last (et valeur inconnue = first)
+        raise PathError("aucune valeur sélectionnée")
+    return values[-1] if agg == "last" else values[0]
+
+
+def extract(data, path, agg="first"):
+    """Valeur désignée par le chemin : a.b[0].c  /  $.a["x.y"]  /  items[*].v  /  items[?(@.id==3)].v
+    Sans joker ni filtre : la valeur (erreur si introuvable). Avec : agrégation `agg`
+    (first, last, sum, avg, min, max, count, list)."""
+    nodes, multi = select(data, path)
+    return aggregate(nodes, agg or "first") if multi else nodes[0]
 
 
 # --------------------------------------------------------------------------
@@ -223,7 +351,7 @@ class Scheduler:
             payload["http"] = code
             for c in cfg.get("commands", []):
                 try:
-                    payload["values"][str(c["id"])] = extract(data, c["path"])
+                    payload["values"][str(c["id"])] = extract(data, c["path"], c.get("agg", "first"))
                 except PathError as e:
                     payload["errors"][str(c["id"])] = "%s (chemin '%s')" % (e, c["path"])
         except Exception as e:
@@ -298,10 +426,9 @@ class Scheduler:
         }
 
     def _send(self, payload):
-        url = self.callback + ("&" if "?" in self.callback else "?") + urllib.parse.urlencode({"apikey": self.apikey})
         req = urllib.request.Request(
-            url, data=json.dumps(payload).encode("utf-8"), method="POST",
-            headers={"Content-Type": "application/json"})
+            self.callback, data=json.dumps(payload).encode("utf-8"), method="POST",
+            headers={"Content-Type": "application/json", "X-Jeedom-Apikey": self.apikey})
         with urllib.request.urlopen(req, timeout=15) as r:
             r.read()
 
@@ -339,11 +466,13 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(allow_abbrev=False)  # pas d'abréviation : --apikey ne doit pas devenir --apikey-file
     ap.add_argument("--loglevel", default="info")
     ap.add_argument("--socketport", type=int, default=55081)
     ap.add_argument("--callback", required=True)
-    ap.add_argument("--apikey", required=True)
+    ap.add_argument("--apikey-file", default="",
+                    help="fichier (mode 0600) contenant la clé API ; supprimé après lecture. "
+                         "À défaut : variable d'environnement JSONPOLLER_APIKEY. Jamais en argument.")
     ap.add_argument("--pid", default="")
     args = ap.parse_args()
 
@@ -354,13 +483,24 @@ def main():
         level=levels.get(args.loglevel.lower(), logging.INFO),
         format="[%(asctime)s][%(levelname)s] : %(message)s", stream=sys.stdout)
 
+    apikey = os.environ.get("JSONPOLLER_APIKEY", "")
+    if args.apikey_file:
+        try:
+            with open(args.apikey_file, encoding="utf-8") as f:
+                apikey = f.read().strip()
+            os.remove(args.apikey_file)  # la clé ne reste pas sur le disque
+        except OSError as e:
+            ap.error("lecture de la clé API impossible : %s" % e)
+    if not apikey:
+        ap.error("clé API absente (--apikey-file ou JSONPOLLER_APIKEY)")
+
     if args.pid:
         with open(args.pid, "w") as f:
             f.write(str(os.getpid()))
 
-    sched = Scheduler(args.callback, args.apikey)
+    sched = Scheduler(args.callback, apikey)
     server = Server(("127.0.0.1", args.socketport), Handler)
-    server.apikey = args.apikey
+    server.apikey = apikey
     server.scheduler = sched
 
     def shutdown(*_):
