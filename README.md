@@ -43,10 +43,20 @@ pour une commande binaire ou numérique.
 
 Chaque commande a une option *Format* : **automatique** (selon le sous-type), **nombre** (`"0.00"`, `"1,5"` ou `"21.5 °C"` deviennent des nombres), **booléen** (`true`/`on`/`yes`/`1` → 1) ou **texte**. L'explorateur de JSON détecte les nombres écrits entre guillemets et préconfigure le format *nombre*.
 
+### Facteur, décalage, décimales
+
+Pour une commande numérique : valeur finale = **valeur × facteur + décalage**, puis arrondi au nombre de **décimales**
+demandé (0 à 10). Ex. : facteur `0.001` (mW → W), décalage `-273.15` (K → °C). Champs vides ou invalides = neutres ;
+la virgule décimale est acceptée. Sans décimales indiquées, la valeur est arrondie à 10 décimales pour éliminer le bruit
+des flottants. L'ordre est : format (texte → nombre) puis facteur/décalage.
+Jeedom propose aussi un calcul natif (*Configuration avancée de la commande → Calcul et arrondi*, formule avec `#value#`) :
+n'utilisez pas les deux sur la même commande, le calcul serait appliqué deux fois.
+
 Commandes créées automatiquement : *Code HTTP*, *Erreur*, *Dernière réponse OK* (infos), *Rafraîchir* (action).
 
 *Dernière réponse OK* contient la date/heure (`AAAA-MM-JJ hh:mm:ss`, heure du serveur) de la dernière scrutation réussie ;
-elle n'est pas mise à jour en cas d'erreur, ce qui permet de détecter une source muette
+elle n'est pas mise à jour en cas d'erreur (et, en fonctionnement stable, au plus toutes les 60 s : voir *Envoi
+différentiel*), ce qui permet de détecter une source muette
 (ex. dans un scénario : `time() - strtotime(#[Objet][Équipement][Dernière réponse OK]#) > 300`).
 Sur un équipement existant, la commande apparaît à la première réponse du daemon après la mise à jour.
 
@@ -57,6 +67,16 @@ Si une source ne répond pas (réseau, timeout, HTTP ≥ 400, réponse non JSON)
 Dès qu'une réponse valide arrive, la période normale reprend. Le bouton *Rafraîchir* force un essai immédiat.
 Seul le premier échec est journalisé en `warning` (les suivants en `debug`) ; le retour à la normale est journalisé en `info`.
 Un chemin JSON introuvable n'est pas un échec de la source : la période n'est pas modifiée.
+
+## Envoi différentiel
+
+Le daemon n'appelle Jeedom que lorsqu'il y a quelque chose de nouveau : une valeur modifiée (seules les valeurs
+modifiées sont envoyées), un changement d'état (succès ↔ erreur, code HTTP, message d'erreur), ou au moins **toutes les
+60 s** un envoi complet (état + toutes les valeurs, qui sert aussi de filet de sécurité contre une dérive). Un envoi
+complet est aussi fait après chaque changement de configuration et à chaque clic sur *Rafraîchir*. Si l'appel à Jeedom
+échoue, rien n'est considéré comme envoyé : tout est renvoyé au cycle suivant.
+Conséquence : une valeur qui change est transmise dès la scrutation suivante (pas de retard), mais la commande
+*Dernière réponse OK* peut avoir jusqu'à 60 s de résolution ; réglez les seuils d'alerte au-dessus de 2 minutes.
 
 ## Surveillance du daemon
 

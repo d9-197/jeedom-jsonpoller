@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 LOG = logging.getLogger("jsonpollerd")
 MIN_INTERVAL = 10
 MAX_BODY = 5 * 1024 * 1024
+HEARTBEAT = 60     # s : envoi complet (état + toutes les valeurs) au moins à cette fréquence
 MAX_BACKOFF = 300  # délai maximal (s) entre deux essais après des échecs consécutifs
 WORKERS = 8
 
@@ -131,6 +132,11 @@ def fetch(eq):
 # --------------------------------------------------------------------------
 # Planificateur
 # --------------------------------------------------------------------------
+def _ser(value):
+    """Forme comparable d'une valeur (distingue true de 1 et "1" de 1)."""
+    return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+
 def next_delay(interval, fails):
     """Délai avant le prochain essai : la période normale tant que tout va bien,
     puis doublement à chaque échec consécutif, plafonné à MAX_BACKOFF
@@ -164,6 +170,9 @@ class Scheduler:
                     st["fails"] = 0
                     st["next"] = 0.0
                 st["cfg"] = cfg
+                # La conversion (format, facteur...) est faite côté Jeedom : après tout
+                # changement de configuration, on renvoie tout au prochain cycle.
+                st["last"], st["sig"], st["last_sent"] = {}, None, None
                 new[eid] = st
             self.state = new
         LOG.info("Configuration reçue : %d équipement(s)", len(equipments))
@@ -174,6 +183,7 @@ class Scheduler:
             st = self.state.get(str(eid))
             if st:
                 st["next"] = 0.0
+                st["last_sent"] = None  # le bouton Rafraîchir force un envoi complet
         self.wake.set()
 
     def run(self):
@@ -233,16 +243,37 @@ class Scheduler:
             LOG.debug("%s : échec n°%d (%s) - nouvel essai dans %ds", name, st["fails"], payload["error"], delay)
 
         try:
-            self._send(payload)
-            self.cb_fail_streak = 0
-        except Exception as e:
-            self.cb_fail_streak += 1
-            LOG.warning("Callback Jeedom en échec (%d de suite) : %s", self.cb_fail_streak, e)
+            self._report(st, payload)
         finally:
             with self.lock:
                 st["running"] = False
                 st["next"] = max(time.monotonic(), started + delay)
             self.wake.set()
+
+    def _report(self, st, payload):
+        """Envoie à Jeedom uniquement ce qui a changé : valeurs modifiées, changement d'état
+        (HTTP/erreur), et un envoi complet au moins toutes les HEARTBEAT secondes."""
+        now = time.monotonic()
+        last = st.setdefault("last", {})
+        full = st.get("last_sent") is None or now - st["last_sent"] >= HEARTBEAT
+        values = payload["values"]
+        to_send = {k: v for k, v in values.items() if full or k not in last or _ser(last[k]) != _ser(v)}
+        sig = (payload["http"], payload["error"], _ser(payload["errors"]))
+        if not (full or to_send or sig != st.get("sig")):
+            LOG.debug("%s : rien de nouveau, pas d'appel à Jeedom", st["cfg"].get("name"))
+            return
+        payload["values"] = to_send
+        try:
+            self._send(payload)
+        except Exception as e:
+            # rien n'est mémorisé : le prochain cycle renverra tout
+            self.cb_fail_streak += 1
+            LOG.warning("Callback Jeedom en échec (%d de suite) : %s", self.cb_fail_streak, e)
+            return
+        self.cb_fail_streak = 0
+        last.update(to_send)
+        st["sig"] = sig
+        st["last_sent"] = now
 
     def status(self):
         now = time.monotonic()

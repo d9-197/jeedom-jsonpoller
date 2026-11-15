@@ -251,6 +251,9 @@ class jsonpoller extends eqLogic {
         log::add(__CLASS__, 'warning', $eq->getHumanName() . ' / ' . $cmd->getName() . ' : valeur "' . json_encode($value) . '" incompatible avec le sous-type ' . $cmd->getSubType());
         continue;
       }
+      if ($cmd->getSubType() == 'numeric') {
+        $converted = self::applyScale($converted, $cmd->getConfiguration('factor', ''), $cmd->getConfiguration('offset', ''), $cmd->getConfiguration('decimals', ''));
+      }
       $eq->checkAndUpdateCmd($cmd, $converted);
     }
   }
@@ -297,6 +300,29 @@ class jsonpoller extends eqLogic {
       default:
         return is_bool($_value) ? ($_value ? 'true' : 'false') : (string) $_value;
     }
+  }
+
+  /**
+   * Met à l'échelle une valeur numérique : valeur * facteur + décalage, puis arrondi.
+   * Champs vides ou non numériques = neutres (facteur 1, décalage 0). La virgule décimale est acceptée.
+   * Sans nombre de décimales demandé, on arrondit à 10 décimales pour éliminer le bruit
+   * des flottants (0.1 * 3 = 0.30000000000000004). Sans facteur ni décalage ni décimales : valeur inchangée.
+   */
+  public static function applyScale($_value, $_factor = '', $_offset = '', $_decimals = '') {
+    if (!is_int($_value) && !is_float($_value)) {
+      return $_value;
+    }
+    $num = function ($v, $default) {
+      $v = str_replace(',', '.', trim((string) $v));
+      return is_numeric($v) ? $v + 0 : $default;
+    };
+    $factor = $num($_factor, 1);
+    $offset = $num($_offset, 0);
+    $decimals = trim((string) $_decimals);
+    if ($factor == 1 && $offset == 0 && !is_numeric($decimals)) {
+      return $_value;
+    }
+    return round($_value * $factor + $offset, is_numeric($decimals) ? max(0, min(10, (int) $decimals)) : 10);
   }
 
   private static function toNumber($_value) {

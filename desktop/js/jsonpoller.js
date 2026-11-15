@@ -25,6 +25,11 @@ function addCmdToTable(_cmd) {
     tr += '<option value="boolean">{{Format : booléen (true/on/1 → 1)}}</option>'
     tr += '<option value="string">{{Format : texte}}</option>'
     tr += '</select>'
+    tr += '<div style="margin-top:5px;">'
+    tr += '<input class="tooltips cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="factor" placeholder="{{× facteur}}" title="{{Facteur multiplicateur appliqué aux valeurs numériques (ex : 0.001 pour convertir des mW en W). Valeur finale = valeur × facteur + décalage}}" style="width:32%;max-width:90px;display:inline-block;margin-right:2px;">'
+    tr += '<input class="tooltips cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="offset" placeholder="{{+ décalage}}" title="{{Valeur ajoutée après multiplication (ex : -273.15 pour passer de Kelvin en °C)}}" style="width:32%;max-width:90px;display:inline-block;margin-right:2px;">'
+    tr += '<input class="tooltips cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="decimals" placeholder="{{Décim.}}" title="{{Nombre de décimales conservées (0 à 10). Vide = pas d\'arrondi particulier}}" style="width:28%;max-width:80px;display:inline-block;">'
+    tr += '</div>'
   } else if (!isAction) {
     tr += '<span class="label label-default">{{Commande interne}}</span>'
   }
