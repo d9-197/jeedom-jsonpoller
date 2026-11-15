@@ -39,6 +39,10 @@ Jeedom le relance automatiquement s'il tombe (gestion automatique activée par d
 Objets/tableaux sélectionnés : remontés en texte JSON. Les booléens sont convertis en 0/1
 pour une commande binaire ou numérique.
 
+### Format de la valeur
+
+Chaque commande a une option *Format* : **automatique** (selon le sous-type), **nombre** (`"0.00"`, `"1,5"` ou `"21.5 °C"` deviennent des nombres), **booléen** (`true`/`on`/`yes`/`1` → 1) ou **texte**. L'explorateur de JSON détecte les nombres écrits entre guillemets et préconfigure le format *nombre*.
+
 Commandes créées automatiquement : *Code HTTP*, *Erreur* (infos), *Rafraîchir* (action).
 
 ## Architecture

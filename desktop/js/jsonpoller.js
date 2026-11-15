@@ -19,6 +19,12 @@ function addCmdToTable(_cmd) {
   tr += '<td>'
   if (!isAction && init(_cmd.logicalId) == '') {
     tr += '<input class="cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="jsonPath" placeholder="ex : data.temperature  ou  items[0].value">'
+    tr += '<select class="cmdAttr form-control input-sm" data-l1key="configuration" data-l2key="format" style="margin-top:5px;" title="{{Conversion de la valeur JSON avant écriture dans la commande}}">'
+    tr += '<option value="auto">{{Format : automatique (selon le sous-type)}}</option>'
+    tr += '<option value="number">{{Format : nombre (&quot;0.00&quot; ou &quot;1,5&quot; → nombre)}}</option>'
+    tr += '<option value="boolean">{{Format : booléen (true/on/1 → 1)}}</option>'
+    tr += '<option value="string">{{Format : texte}}</option>'
+    tr += '</select>'
   } else if (!isAction) {
     tr += '<span class="label label-default">{{Commande interne}}</span>'
   }
@@ -102,7 +108,7 @@ $('#bt_exploreJson').off('click').on('click', function () {
       html += '<div style="max-height:420px;overflow:auto;"><table class="table table-condensed table-hover" id="table_jsonValues"><thead><tr><th>{{Chemin}}</th><th>{{Valeur}}</th></tr></thead><tbody>'
       rows.forEach(function (r) {
         var v = r.value === null ? 'null' : String(r.value)
-        html += '<tr class="cursor jsonRow" data-path="' + $('<i>').text(r.path).html().replace(/"/g, '&quot;') + '" data-type="' + (typeof r.value) + '">'
+        html += '<tr class="cursor jsonRow" data-path="' + $('<i>').text(r.path).html().replace(/"/g, '&quot;') + '" data-type="' + (typeof r.value) + '" data-numstr="' + (typeof r.value === 'string' && /^\s*[+-]?\d+([.,]\d+)?\s*$/.test(r.value) ? 1 : 0) + '">'
         html += '<td><code>' + $('<i>').text(r.path === '' ? '(racine)' : r.path).html() + '</code></td>'
         html += '<td>' + $('<i>').text(v.length > 120 ? v.substr(0, 120) + '…' : v).html() + '</td></tr>'
       })
@@ -123,11 +129,12 @@ $('#bt_exploreJson').off('click').on('click', function () {
       dlg.on('click', 'tr.jsonRow', function () {
         var path = $(this).attr('data-path')
         var type = $(this).attr('data-type')
-        var subType = type === 'number' ? 'numeric' : (type === 'boolean' ? 'binary' : 'string')
+        var numStr = $(this).attr('data-numstr') == '1'
+        var subType = (type === 'number' || numStr) ? 'numeric' : (type === 'boolean' ? 'binary' : 'string')
         var name = path.replace(/\[(\d+)\]/g, '_$1').split('.').pop().replace(/[\["\]]/g, '') || 'valeur'
         addCmdToTable({
           type: 'info', subType: subType, name: name, isVisible: 1,
-          configuration: { jsonPath: path }
+          configuration: { jsonPath: path, format: numStr ? 'number' : 'auto' }
         })
         $('.cmd:last .cmdAttr[data-l1key=type]').val('info')
         modifyWithoutSave = true

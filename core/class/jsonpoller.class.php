@@ -161,7 +161,7 @@ class jsonpoller extends eqLogic {
       if (!is_object($cmd) || $cmd->getEqLogic_id() != $eq->getId()) {
         continue;
       }
-      $converted = self::convertValue($value, $cmd->getSubType());
+      $converted = self::convertValue($value, $cmd->getSubType(), (string) $cmd->getConfiguration('format', 'auto'));
       if ($converted === null) {
         log::add(__CLASS__, 'warning', $eq->getHumanName() . ' / ' . $cmd->getName() . ' : valeur "' . json_encode($value) . '" incompatible avec le sous-type ' . $cmd->getSubType());
         continue;
@@ -170,30 +170,72 @@ class jsonpoller extends eqLogic {
     }
   }
 
-  public static function convertValue($_value, $_subType) {
+  /**
+   * Convertit une valeur JSON pour Jeedom.
+   * $_format : auto (selon le sous-type) | number | boolean | string
+   *  - number  : "0.00", "1,5", " 21.5 °C" => nombre (nombre en tête de chaîne)
+   *  - boolean : true/false, on/off, yes/no, open/closed, 0/1 => 0 ou 1
+   *  - string  : texte (booléen => "true"/"false", objet/tableau => JSON)
+   * Retourne null si la valeur est inconvertible (la commande n'est pas mise à jour).
+   */
+  public static function convertValue($_value, $_subType, $_format = 'auto') {
     if (is_array($_value)) {
       $_value = json_encode($_value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+    switch ($_format) {
+      case 'number':
+        $_value = self::toNumber($_value);
+        if ($_value === null) {
+          return null;
+        }
+        break;
+      case 'boolean':
+        $_value = self::toBool($_value);
+        if ($_value === null) {
+          return null;
+        }
+        break;
+      case 'string':
+        if ($_value === null) {
+          return '';
+        }
+        return is_bool($_value) ? ($_value ? 'true' : 'false') : (string) $_value;
     }
     if ($_value === null) {
       return $_subType == 'string' ? '' : null;
     }
     switch ($_subType) {
       case 'numeric':
-        if (is_bool($_value)) {
-          return $_value ? 1 : 0;
-        }
-        return is_numeric($_value) ? $_value + 0 : null;
+        return self::toNumber($_value);
       case 'binary':
-        if (is_string($_value)) {
-          $v = strtolower(trim($_value));
-          if (in_array($v, array('true', 'on', 'yes', 'open', '1'), true)) return 1;
-          if (in_array($v, array('false', 'off', 'no', 'closed', '0', ''), true)) return 0;
-          return is_numeric($v) ? ((float) $v != 0 ? 1 : 0) : null;
-        }
-        return $_value ? 1 : 0;
+        return self::toBool($_value);
       default:
         return is_bool($_value) ? ($_value ? 'true' : 'false') : (string) $_value;
     }
+  }
+
+  private static function toNumber($_value) {
+    if (is_bool($_value)) {
+      return $_value ? 1 : 0;
+    }
+    if (is_int($_value) || is_float($_value)) {
+      return $_value;
+    }
+    if (is_string($_value) && preg_match('/^\s*([+-]?\d+(?:[.,]\d+)?(?:[eE][+-]?\d+)?)/u', $_value, $m)) {
+      return str_replace(',', '.', $m[1]) + 0;
+    }
+    return null;
+  }
+
+  private static function toBool($_value) {
+    if (is_string($_value)) {
+      $v = strtolower(trim($_value));
+      if (in_array($v, array('true', 'on', 'yes', 'open', '1'), true)) return 1;
+      if (in_array($v, array('false', 'off', 'no', 'closed', '0', ''), true)) return 0;
+      $n = self::toNumber($v);
+      return $n === null ? null : ($n != 0 ? 1 : 0);
+    }
+    return $_value ? 1 : 0;
   }
 
   /* ------------------------------------------------------------------ */
